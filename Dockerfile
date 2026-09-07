@@ -1,10 +1,11 @@
 FROM ubuntu:22.04
 
-# Avoid tzdata prompts during installation
+# Avoid prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
 
 # Install prerequisites for Python and Flutter
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     unzip \
@@ -14,35 +15,36 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up Flutter
+# Set up Flutter with shallow clone to save time and bandwidth
 ENV FLUTTER_HOME=/opt/flutter
 ENV PATH=${FLUTTER_HOME}/bin:${PATH}
-RUN git clone https://github.com/flutter/flutter.git -b stable ${FLUTTER_HOME}
-RUN flutter config --enable-web
-RUN flutter precache
 
-# Set up the working directory
+RUN git clone --depth 1 -b stable https://github.com/flutter/flutter.git ${FLUTTER_HOME} \
+    && git config --global --add safe.directory ${FLUTTER_HOME} \
+    && flutter config --no-analytics \
+    && flutter config --enable-web \
+    && flutter precache --web
+
 WORKDIR /app
 
-# Copy the backend code and install dependencies
-COPY backend /app/backend
+# 1. Cache Python dependencies
+COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip3 install --no-cache-dir -r /app/backend/requirements.txt
 
-# Copy the frontend code and fetch dependencies
-COPY frontend /app/frontend
+# 2. Cache Flutter dependencies
+COPY frontend/pubspec.* /app/frontend/
 WORKDIR /app/frontend
 RUN flutter pub get
 
-# Build the Flutter web app (Optional: if you just want to serve the static files)
-# RUN flutter build web
-
+# 3. Copy remaining source code
 WORKDIR /app
+COPY backend /app/backend
+COPY frontend /app/frontend
 
-# Expose ports (e.g., 5000 for backend, 8080 for frontend or whatever you use)
 EXPOSE 5000
 EXPOSE 8080
 
-# The default command can be a bash shell, or a script that runs both backend and frontend.
 CMD ["/bin/bash"]
