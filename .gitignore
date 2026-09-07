@@ -1,0 +1,20 @@
+# Backend / Python
+backend/__pycache__/
+backend/.env
+backend/app_database.db
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
