@@ -165,3 +165,66 @@ class RestockHistory(db.Model):
             'purchase_price': round(self.purchase_price, 2),
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else ''
         }
+
+class Table(db.Model):
+    __tablename__ = 'tables'
+
+    id = db.Column(db.Integer, primary_key=True)
+    table_number = db.Column(db.Integer, unique=True, nullable=False)
+    name = db.Column(db.String(50), nullable=True)
+    is_active = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'table_number': self.table_number,
+            'name': self.name or f'طاولة {self.table_number}',
+            'is_active': self.is_active,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else ''
+        }
+
+class ActiveOrder(db.Model):
+    __tablename__ = 'active_orders'
+
+    id = db.Column(db.Integer, primary_key=True)
+    table_id = db.Column(db.Integer, db.ForeignKey('tables.id'), nullable=True)
+    order_type = db.Column(db.String(20), default='table') # 'table' or 'direct'
+    cashier_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    total_amount = db.Column(db.Float, default=0.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    items = db.relationship('ActiveOrderItem', backref='active_order', lazy=True, cascade="all, delete-orphan")
+    table = db.relationship('Table', backref=db.backref('active_order', uselist=False))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'table_id': self.table_id,
+            'order_type': self.order_type,
+            'total_amount': round(self.total_amount, 2),
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else '',
+            'items': [item.to_dict() for item in self.items]
+        }
+
+class ActiveOrderItem(db.Model):
+    __tablename__ = 'active_order_items'
+
+    id = db.Column(db.Integer, primary_key=True)
+    active_order_id = db.Column(db.Integer, db.ForeignKey('active_orders.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=True)
+    product_name = db.Column(db.String(150), nullable=False)
+    quantity = db.Column(db.Float, default=1.0)
+    unit_price = db.Column(db.Float, default=0.0)
+    total_price = db.Column(db.Float, default=0.0)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'product_name': self.product_name,
+            'quantity': self.quantity,
+            'unit_price': self.unit_price,
+            'total_price': round(self.total_price, 2)
+        }
+

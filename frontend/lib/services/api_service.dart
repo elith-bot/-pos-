@@ -212,14 +212,78 @@ class ApiService {
     }
   }
 
+  // --- TABLES ---
+  static Future<List<Map<String, dynamic>>> getTables() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/tables'));
+      if (response.statusCode == 200) {
+        final data = json.decode(utf8.decode(response.bodyBytes));
+        if (data['tables'] != null) {
+          return List<Map<String, dynamic>>.from(data['tables']);
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  static Future<bool> createTables(int count) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/tables'),
+        headers: {'Content-Type': 'application/json; charset=UTF-8'},
+        body: json.encode({'count': count}),
+      );
+      return response.statusCode == 201 || response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> deleteTable(int tableId) async {
+    try {
+      final response = await http.delete(Uri.parse('$baseUrl/api/tables/$tableId'));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> getTableOrder(int tableId) async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/api/tables/$tableId/order'));
+      if (response.statusCode == 200) {
+        return json.decode(utf8.decode(response.bodyBytes));
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<bool> saveTableOrder(int tableId, List<CartItemModel> cartItems) async {
+    try {
+      final body = {
+        'cashier_id': currentUser?.id,
+        'items': cartItems.map((item) => item.toJson()).toList(),
+      };
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/tables/$tableId/order'),
+        headers: {'Content-Type': 'application/json; charset=UTF-8'},
+        body: json.encode(body),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // --- SALES ---
-  static Future<bool> checkoutSale(List<CartItemModel> cartItems, String paymentMethod, double globalDiscount) async {
+  static Future<bool> checkoutSale(List<CartItemModel> cartItems, String paymentMethod, double globalDiscount, {int? tableId}) async {
     try {
       final body = {
         'cashier_id': currentUser?.id,
         'cashier_name': currentUser?.fullName ?? 'كاشير',
         'payment_method': paymentMethod,
         'global_discount': globalDiscount,
+        'table_id': tableId,
         'items': cartItems.map((item) => item.toJson()).toList(),
       };
       final response = await http.post(

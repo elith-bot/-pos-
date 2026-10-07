@@ -35,6 +35,13 @@ class CartItemModel {
   double get totalPurchaseCost => unitPurchasePrice * effectiveQuantity;
   double get totalSellingAmount => unitSellingPrice * effectiveQuantity;
   double get totalDiscountAmount => discount * effectiveQuantity;
+  
+  set totalDiscountAmount(double newTotalDiscount) {
+    if (effectiveQuantity > 0) {
+      discount = newTotalDiscount / effectiveQuantity;
+    }
+  }
+
   double get netProfit => totalPrice - totalPurchaseCost;
 
   Map<String, dynamic> toJson() {

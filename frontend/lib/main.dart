@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'core/app_theme.dart';
 import 'models/user_model.dart';
@@ -16,6 +17,15 @@ void main() async {
   runApp(MyApp(isLoggedIn: savedUser != null));
 }
 
+class AppScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+      };
+}
+
 class MyApp extends StatelessWidget {
   final bool isLoggedIn;
   const MyApp({super.key, required this.isLoggedIn});
@@ -25,11 +35,18 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'نظام الكاشير والمبيعات المتكامل',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: AppScrollBehavior(),
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: AppColors.background,
         colorScheme: const ColorScheme.dark(
           primary: AppColors.primarySolid,
           surface: AppColors.surface,
+        ),
+        scrollbarTheme: ScrollbarThemeData(
+          thumbVisibility: WidgetStateProperty.all(true),
+          thickness: WidgetStateProperty.all(8.0),
+          radius: const Radius.circular(10),
+          interactive: true,
         ),
       ),
       home: isLoggedIn ? const MainNavigationScreen() : const AuthScreen(),

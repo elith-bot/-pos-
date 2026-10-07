@@ -7,7 +7,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import OperationalError
 from config import Config
 
-from models import db, User, OTPCode, Product, Sale, SaleItem, Expense, RestockHistory
+from models import db, User, OTPCode, Product, Sale, SaleItem, Expense, RestockHistory, Table, ActiveOrder, ActiveOrderItem
+from core_system import core
+import actions
 
 def create_app():
     app = Flask(__name__)
@@ -46,7 +48,7 @@ def create_app():
                 db.session.rollback()
 
             # Seed initial Developer account if users table is empty
-            if User.query.count() == 0:
+            if User.query.count() == 0 : 
                 dev = User(
                     username='admin',
                     password_hash=generate_password_hash('admin123'),
@@ -55,7 +57,7 @@ def create_app():
                     is_active=True
                 )
                 db.session.add(dev)
-
+     
                 # Seed sample products
                 sample_products = [
                     Product(name='مشروب بيبسي 330 مل', purchase_price=500, selling_price=750, stock_quantity=50, category='مشروبات'),
@@ -389,6 +391,8 @@ def create_app():
         payment_method = data.get('payment_method', 'نقداً')
         global_discount = float(data.get('global_discount', 0.0))
 
+        table_id = data.get('table_id')
+
         if not cart_items:
             return jsonify({'status': 'error', 'message': 'السلة فارغة'}), 400
 
@@ -451,6 +455,15 @@ def create_app():
             s_item.sale_id = sale.id
             db.session.add(s_item)
 
+        # Handle Table Checkout
+        if table_id:
+            table = Table.query.get(table_id)
+            if table:
+                active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
+                if active_order:
+                    db.session.delete(active_order)
+                table.is_active = False
+
         db.session.commit()
 
         return jsonify({'status': 'success', 'message': 'تم إكمال عملية البيع بنجاح', 'sale': sale.to_dict()}), 201
@@ -459,6 +472,118 @@ def create_app():
     def get_sales():
         sales = Sale.query.order_by(Sale.id.desc()).limit(100).all()
         return jsonify({'status': 'success', 'sales': [s.to_dict() for s in sales]})
+
+    # ================= TABLES & ACTIVE ORDERS APIs =================
+    
+    @app.route('/api/tables', methods=['GET'])
+    def get_tables():
+        # Using Core System
+        return jsonify({'status': 'success', 'tables': core.execute('get_tables', {})})
+
+    
+    @app.route('/api/tables', methods=['POST'])
+    def create_tables():
+        data = request.get_json() or {}
+        count = data.get('count', 1)
+        
+        try:
+            count = int(count)
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'العدد غير صحيح'}), 400
+
+        if count <= 0:
+            return jsonify({'status': 'error', 'message': 'العدد يجب أن يكون أكبر من صفر'}), 400
+
+        max_table = db.session.query(db.func.max(Table.table_number)).scalar() or 0
+        
+        new_tables = []
+        for i in range(1, count + 1):
+            new_table = Table(table_number=max_table + i)
+            db.session.add(new_table)
+            new_tables.append(new_table)
+            
+        db.session.commit()
+        
+        return jsonify({'status': 'success', 'message': f'تمت إضافة {count} طاولة بنجاح', 'tables': [t.to_dict() for t in new_tables]}), 201
+
+    @app.route('/api/tables/<int:table_id>', methods=['DELETE'])
+    def delete_table(table_id):
+        table = Table.query.get(table_id)
+        if not table:
+            return jsonify({'status': 'error', 'message': 'الطاولة غير موجودة'}), 404
+            
+        if table.is_active:
+            return jsonify({'status': 'error', 'message': 'لا يمكن حذف طاولة مشغولة بطلبات حالياً'}), 400
+            
+        db.session.delete(table)
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': 'تم حذف الطاولة بنجاح'})
+
+    @app.route('/api/tables/<int:table_id>/order', methods=['GET'])
+    def get_table_order(table_id):
+        table = Table.query.get(table_id)
+        if not table:
+            return jsonify({'status': 'error', 'message': 'الطاولة غير موجودة'}), 404
+            
+        active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
+        if active_order:
+            return jsonify({'status': 'success', 'has_order': True, 'order': active_order.to_dict()})
+        else:
+            return jsonify({'status': 'success', 'has_order': False})
+
+    @app.route('/api/tables/<int:table_id>/order', methods=['POST'])
+    def save_table_order(table_id):
+        table = Table.query.get(table_id)
+        if not table:
+            return jsonify({'status': 'error', 'message': 'الطاولة غير موجودة'}), 404
+            
+        data = request.get_json() or {}
+        cart_items = data.get('items', [])
+        cashier_id = data.get('cashier_id')
+        
+        if not cart_items:
+            active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
+            if active_order:
+                db.session.delete(active_order)
+                table.is_active = False
+                db.session.commit()
+            return jsonify({'status': 'success', 'message': 'تم مسح الطلب وجعل الطاولة متاحة'})
+            
+        active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
+        if not active_order:
+            active_order = ActiveOrder(table_id=table_id, cashier_id=cashier_id)
+            db.session.add(active_order)
+            db.session.flush()
+        else:
+            ActiveOrderItem.query.filter_by(active_order_id=active_order.id).delete()
+            active_order.cashier_id = cashier_id
+            
+        total_amount = 0.0
+        
+        for item_data in cart_items:
+            product_id = item_data.get('product_id')
+            qty = float(item_data.get('quantity', 1))
+            unit_selling = float(item_data.get('unit_selling_price', 0))
+            discount = float(item_data.get('discount', 0))
+            
+            item_total = (unit_selling - discount) * qty
+            total_amount += item_total
+            
+            order_item = ActiveOrderItem(
+                active_order_id=active_order.id,
+                product_id=product_id,
+                product_name=item_data.get('product_name', 'منتج'),
+                quantity=qty,
+                unit_price=unit_selling - discount,
+                total_price=item_total
+            )
+            db.session.add(order_item)
+            
+        active_order.total_amount = total_amount
+        table.is_active = True
+        
+        db.session.commit()
+        return jsonify({'status': 'success', 'message': 'تم حفظ طلب الطاولة بنجاح', 'order': active_order.to_dict()})
 
     # ================= EXPENSES APIs =================
     @app.route('/api/expenses', methods=['GET'])
@@ -550,6 +675,16 @@ def create_app():
             f.writelines(new_lines)
 
         return jsonify({'status': 'success', 'message': f'تم تغيير نوع قاعدة البيانات إلى {new_type}', 'db_type': new_type})
+
+
+    @app.route('/api/action/<action_name>', methods=['POST'])
+    def api_core_action(action_name):
+        try:
+            data = request.json or {}
+            result = core.execute(action_name, data)
+            return jsonify({'status': 'success', 'data': result})
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 400
 
     return app
 
