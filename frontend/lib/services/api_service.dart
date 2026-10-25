@@ -22,7 +22,10 @@ class ApiService {
   }
 
   // --- AUTHENTICATION ---
-  static Future<Map<String, dynamic>> login(String username, String password) async {
+  static Future<Map<String, dynamic>> login(
+    String username,
+    String password,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/auth/login'),
@@ -39,12 +42,20 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> register(String username, String password, String fullName) async {
+  static Future<Map<String, dynamic>> register(
+    String username,
+    String password,
+    String fullName,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/auth/register'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
-        body: json.encode({'username': username, 'password': password, 'full_name': fullName}),
+        body: json.encode({
+          'username': username,
+          'password': password,
+          'full_name': fullName,
+        }),
       );
       return json.decode(utf8.decode(response.bodyBytes));
     } catch (e) {
@@ -65,12 +76,20 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> resetPassword(String username, String code, String newPassword) async {
+  static Future<Map<String, dynamic>> resetPassword(
+    String username,
+    String code,
+    String newPassword,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/auth/reset-password'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
-        body: json.encode({'username': username, 'code': code, 'new_password': newPassword}),
+        body: json.encode({
+          'username': username,
+          'code': code,
+          'new_password': newPassword,
+        }),
       );
       return json.decode(utf8.decode(response.bodyBytes));
     } catch (e) {
@@ -85,7 +104,9 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['users'] != null) {
-          return (data['users'] as List).map((u) => UserModel.fromJson(u)).toList();
+          return (data['users'] as List)
+              .map((u) => UserModel.fromJson(u))
+              .toList();
         }
       }
     } catch (_) {}
@@ -107,7 +128,9 @@ class ApiService {
 
   static Future<bool> toggleUserActive(int userId) async {
     try {
-      final response = await http.put(Uri.parse('$baseUrl/api/users/$userId/toggle-active'));
+      final response = await http.put(
+        Uri.parse('$baseUrl/api/users/$userId/toggle-active'),
+      );
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -131,7 +154,9 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['products'] != null) {
-          return (data['products'] as List).map((p) => ProductModel.fromJson(p)).toList();
+          return (data['products'] as List)
+              .map((p) => ProductModel.fromJson(p))
+              .toList();
         }
       }
     } catch (_) {}
@@ -140,7 +165,9 @@ class ApiService {
 
   static Future<ProductModel?> getProductByBarcode(String barcode) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/products/barcode/$barcode'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/products/barcode/$barcode'),
+      );
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['product'] != null) {
@@ -164,7 +191,10 @@ class ApiService {
     }
   }
 
-  static Future<bool> updateProduct(int id, Map<String, dynamic> productData) async {
+  static Future<bool> updateProduct(
+    int id,
+    Map<String, dynamic> productData,
+  ) async {
     try {
       final response = await http.put(
         Uri.parse('$baseUrl/api/products/$id'),
@@ -177,12 +207,24 @@ class ApiService {
     }
   }
 
-  static Future<bool> restockProduct(int id, double addedQty, double purchasePrice) async {
+  static Future<bool> restockProduct(
+    int id,
+    double addedQty,
+    double purchasePrice, {
+    double? sellingPrice,
+  }) async {
     try {
+      final Map<String, dynamic> bodyData = {
+        'added_quantity': addedQty,
+        'purchase_price': purchasePrice,
+      };
+      if (sellingPrice != null) {
+        bodyData['selling_price'] = sellingPrice;
+      }
       final response = await http.post(
         Uri.parse('$baseUrl/api/products/$id/restock'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
-        body: json.encode({'added_quantity': addedQty, 'purchase_price': purchasePrice}),
+        body: json.encode(bodyData),
       );
       return response.statusCode == 200;
     } catch (_) {
@@ -190,13 +232,19 @@ class ApiService {
     }
   }
 
-  static Future<List<RestockHistoryModel>> getRestockHistory(int productId) async {
+  static Future<List<RestockHistoryModel>> getRestockHistory(
+    int productId,
+  ) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/products/$productId/restock-history'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/products/$productId/restock-history'),
+      );
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['history'] != null) {
-          return (data['history'] as List).map((h) => RestockHistoryModel.fromJson(h)).toList();
+          return (data['history'] as List)
+              .map((h) => RestockHistoryModel.fromJson(h))
+              .toList();
         }
       }
     } catch (_) {}
@@ -205,7 +253,9 @@ class ApiService {
 
   static Future<bool> deleteProduct(int id) async {
     try {
-      final response = await http.delete(Uri.parse('$baseUrl/api/products/$id'));
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/products/$id'),
+      );
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -241,7 +291,9 @@ class ApiService {
 
   static Future<bool> deleteTable(int tableId) async {
     try {
-      final response = await http.delete(Uri.parse('$baseUrl/api/tables/$tableId'));
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/tables/$tableId'),
+      );
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -250,7 +302,9 @@ class ApiService {
 
   static Future<Map<String, dynamic>?> getTableOrder(int tableId) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/tables/$tableId/order'));
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/tables/$tableId/order'),
+      );
       if (response.statusCode == 200) {
         return json.decode(utf8.decode(response.bodyBytes));
       }
@@ -258,7 +312,10 @@ class ApiService {
     return null;
   }
 
-  static Future<bool> saveTableOrder(int tableId, List<CartItemModel> cartItems) async {
+  static Future<bool> saveTableOrder(
+    int tableId,
+    List<CartItemModel> cartItems,
+  ) async {
     try {
       final body = {
         'cashier_id': currentUser?.id,
@@ -276,7 +333,12 @@ class ApiService {
   }
 
   // --- SALES ---
-  static Future<bool> checkoutSale(List<CartItemModel> cartItems, String paymentMethod, double globalDiscount, {int? tableId}) async {
+  static Future<bool> checkoutSale(
+    List<CartItemModel> cartItems,
+    String paymentMethod,
+    double globalDiscount, {
+    int? tableId,
+  }) async {
     try {
       final body = {
         'cashier_id': currentUser?.id,
@@ -297,9 +359,21 @@ class ApiService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> getSales() async {
+  static Future<List<Map<String, dynamic>>> getSales({
+    String period = 'all',
+    String? startDate,
+    String? endDate,
+  }) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/sales'));
+      final params = <String, String>{
+        'period': period,
+        'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',
+      };
+      if (startDate != null) params['start_date'] = startDate;
+      if (endDate != null) params['end_date'] = endDate;
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/sales').replace(queryParameters: params),
+      );
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['sales'] != null) {
@@ -321,7 +395,12 @@ class ApiService {
     return {'expenses': [], 'total_amount': 0.0};
   }
 
-  static Future<bool> addExpense(String title, double amount, String category, String notes) async {
+  static Future<bool> addExpense(
+    String title,
+    double amount,
+    String category,
+    String notes,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/api/expenses'),
@@ -331,7 +410,7 @@ class ApiService {
           'amount': amount,
           'category': category,
           'notes': notes,
-          'created_by': currentUser?.fullName ?? 'المدير'
+          'created_by': currentUser?.fullName ?? 'المدير',
         }),
       );
       return response.statusCode == 201;
@@ -342,7 +421,9 @@ class ApiService {
 
   static Future<bool> deleteExpense(int id) async {
     try {
-      final response = await http.delete(Uri.parse('$baseUrl/api/expenses/$id'));
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/expenses/$id'),
+      );
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -350,12 +431,24 @@ class ApiService {
   }
 
   // --- STATS ---
-  static Future<Map<String, dynamic>> getStats() async {
+  static Future<Map<String, dynamic>> getStats({
+    String period = 'all',
+    String? startDate,
+    String? endDate,
+  }) async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/stats'));
+      final params = <String, String>{
+        'period': period,
+        'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',
+      };
+      if (startDate != null) params['start_date'] = startDate;
+      if (endDate != null) params['end_date'] = endDate;
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/stats').replace(queryParameters: params),
+      );
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
-        return data['stats'] ?? {};
+        return Map<String, dynamic>.from(data);
       }
     } catch (_) {}
     return {};

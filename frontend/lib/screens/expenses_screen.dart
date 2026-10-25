@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../services/api_service.dart';
+import '../services/theme_service.dart';
 
 class ExpensesScreen extends StatefulWidget {
   const ExpensesScreen({super.key});
@@ -15,7 +16,13 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
   double _totalAmount = 0.0;
 
   @override
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void initState() {
+    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
     super.initState();
     _loadExpenses();
   }
@@ -43,11 +50,11 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.request_quote, color: AppColors.danger),
-            SizedBox(width: 8),
-            Text('تسجيل مصروف جديد', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontXLarge)),
+            const Icon(Icons.request_quote, color: AppColors.danger),
+            const SizedBox(width: 8),
+            Text('تسجيل مصروف جديد', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
           ],
         ),
         content: Column(
@@ -55,10 +62,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           children: [
             TextField(
               controller: titleCtrl,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 labelText: 'عنوان المصروف (مثلاً: إيجار، كهرباء، رواتب)',
-                labelStyle: const TextStyle(color: AppColors.textGray),
+                labelStyle: TextStyle(color: AppColors.textGray),
                 filled: true,
                 fillColor: AppColors.background,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -68,10 +75,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             TextField(
               controller: amountCtrl,
               keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 labelText: 'المبلغ الإجمالي',
-                labelStyle: const TextStyle(color: AppColors.textGray),
+                labelStyle: TextStyle(color: AppColors.textGray),
                 filled: true,
                 fillColor: AppColors.background,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -80,10 +87,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             const SizedBox(height: 10),
             TextField(
               controller: categoryCtrl,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 labelText: 'التصنيف (قسم الصرفيات)',
-                labelStyle: const TextStyle(color: AppColors.textGray),
+                labelStyle: TextStyle(color: AppColors.textGray),
                 filled: true,
                 fillColor: AppColors.background,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -93,10 +100,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             TextField(
               controller: notesCtrl,
               maxLines: 2,
-              style: const TextStyle(color: Colors.white),
+              style: TextStyle(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 labelText: 'ملاحظات إضافية',
-                labelStyle: const TextStyle(color: AppColors.textGray),
+                labelStyle: TextStyle(color: AppColors.textGray),
                 filled: true,
                 fillColor: AppColors.background,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -105,7 +112,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('إلغاء', style: TextStyle(color: AppColors.textGray))),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () async {
@@ -117,7 +124,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                 _loadExpenses();
               }
             },
-            child: const Text('حفظ المصروف', style: TextStyle(color: Colors.white)),
+            child: const Text('حفظ المصروف', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -126,6 +133,8 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = ThemeService.isDark;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Directionality(
@@ -138,13 +147,15 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppColors.surface, Color(0xFF331B1B)],
+                  gradient: LinearGradient(
+                    colors: isDark
+                        ? [AppColors.surface, const Color(0xFF331B1B)]
+                        : [AppColors.surface, const Color(0xFFFEE2E2)],
                     begin: Alignment.topRight,
                     end: Alignment.bottomLeft,
                   ),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.danger.withOpacity(0.4)),
+                  border: Border.all(color: AppColors.danger.withOpacity(0.3)),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -154,7 +165,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: AppColors.stockLowBg.withOpacity(0.4),
+                            color: AppColors.danger.withOpacity(0.15),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(Icons.account_balance_wallet, color: AppColors.danger, size: 32),
@@ -163,13 +174,15 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('إجمالي الصرفيات والمصاريف',
+                            Text('إجمالي الصرفيات والمصاريف',
                                 style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontMedium)),
                             const SizedBox(height: 4),
                             Text(
                               '${_totalAmount.toStringAsFixed(0)} د.ع',
-                              style: const TextStyle(
-                                  color: Color(0xFFFCA5A5), fontWeight: FontWeight.bold, fontSize: AppSizes.fontHuge),
+                              style: TextStyle(
+                                  color: isDark ? const Color(0xFFFCA5A5) : AppColors.danger,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: AppSizes.fontHuge),
                             ),
                           ],
                         ),
@@ -200,9 +213,9 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.money_off, size: 64, color: Colors.white.withOpacity(0.2)),
+                                Icon(Icons.money_off, size: 64, color: AppColors.textGray.withOpacity(0.3)),
                                 const SizedBox(height: 10),
-                                const Text('لا توجد مصاريف مسجلة حالياً', style: TextStyle(color: AppColors.textGray)),
+                                Text('لا توجد مصاريف مسجلة حالياً', style: TextStyle(color: AppColors.textGray)),
                               ],
                             ),
                           )
@@ -224,19 +237,21 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                                         style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold)),
                                   ),
                                   title: Text(exp['title'] ?? '',
-                                      style: const TextStyle(
-                                          color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
+                                      style: TextStyle(
+                                          color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
                                   subtitle: Text(
                                     'التصنيف: ${exp['category']} • بواسطة: ${exp['created_by']} • ${exp['created_at']}',
-                                    style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal),
+                                    style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal),
                                   ),
                                   trailing: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Text(
                                         '${exp['amount']} د.ع',
-                                        style: const TextStyle(
-                                            color: Color(0xFFFCA5A5), fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader),
+                                        style: TextStyle(
+                                            color: isDark ? const Color(0xFFFCA5A5) : AppColors.danger,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: AppSizes.fontHeader),
                                       ),
                                       const SizedBox(width: 10),
                                       IconButton(
@@ -258,5 +273,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
         ),
       ),
     );
+  }
+  @override
+  void dispose() {
+    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
+    super.dispose();
   }
 }

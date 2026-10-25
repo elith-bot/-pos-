@@ -4,12 +4,14 @@ import 'core/app_theme.dart';
 import 'models/user_model.dart';
 import 'services/api_service.dart';
 import 'services/session_service.dart';
+import 'services/theme_service.dart';
 import 'services/permissions_service.dart';
 import 'screens/auth_screen.dart';
 import 'screens/main_navigation_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ThemeService.init();
   final savedUser = await SessionService.loadSession();
   if (savedUser != null) {
     ApiService.currentUser = savedUser;
@@ -32,24 +34,19 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'نظام الكاشير والمبيعات المتكامل',
-      debugShowCheckedModeBanner: false,
-      scrollBehavior: AppScrollBehavior(),
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: AppColors.background,
-        colorScheme: const ColorScheme.dark(
-          primary: AppColors.primarySolid,
-          surface: AppColors.surface,
-        ),
-        scrollbarTheme: ScrollbarThemeData(
-          thumbVisibility: WidgetStateProperty.all(true),
-          thickness: WidgetStateProperty.all(8.0),
-          radius: const Radius.circular(10),
-          interactive: true,
-        ),
-      ),
-      home: isLoggedIn ? const MainNavigationScreen() : const AuthScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeService.themeModeNotifier,
+      builder: (context, themeMode, _) {
+        return MaterialApp(
+          title: 'نظام الكاشير والمبيعات المتكامل',
+          debugShowCheckedModeBanner: false,
+          scrollBehavior: AppScrollBehavior(),
+          themeMode: themeMode,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          home: isLoggedIn ? const MainNavigationScreen() : const AuthScreen(),
+        );
+      },
     );
   }
 }

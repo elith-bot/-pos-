@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import '../core/app_theme.dart';
+import '../services/theme_service.dart';
 import '../services/file_picker_helper.dart';
 import '../models/product_model.dart';
 import '../models/cart_item_model.dart';
@@ -81,6 +82,7 @@ class _PosScreenState extends State<PosScreen> {
 
   @override
   void dispose() {
+    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
     HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     for (var ctrl in _controllers.values) {
       ctrl.dispose();
@@ -148,12 +150,17 @@ class _PosScreenState extends State<PosScreen> {
     }
   }
 
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
-    void initState() {
+  void initState() {
     super.initState();
     _loadProducts();
     _loadTables();
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
   }
 
   
@@ -230,7 +237,7 @@ class _PosScreenState extends State<PosScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('إدارة الطاولات', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
+              Text('إدارة الطاولات', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
                 icon: const Icon(Icons.add, color: Colors.white),
@@ -241,14 +248,14 @@ class _PosScreenState extends State<PosScreen> {
                     context: context,
                     builder: (ctx) => AlertDialog(
                       backgroundColor: AppColors.surface,
-                      title: const Text('إضافة طاولات جديدة', style: TextStyle(color: Colors.white)),
+                      title: Text('إضافة طاولات جديدة', style: TextStyle(color: AppColors.textPrimary)),
                       content: TextField(
                         controller: ctrl,
                         keyboardType: TextInputType.number,
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(color: AppColors.textPrimary),
                         decoration: InputDecoration(
                           labelText: 'عدد الطاولات',
-                          labelStyle: const TextStyle(color: AppColors.textGray),
+                          labelStyle: TextStyle(color: AppColors.textGray),
                           filled: true,
                           fillColor: AppColors.background,
                         ),
@@ -289,9 +296,9 @@ class _PosScreenState extends State<PosScreen> {
                 onTap: () => _openTable(table),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isActive ? AppColors.success.withOpacity(0.9) : Colors.grey.shade400,
+                    color: isActive ? AppColors.success.withOpacity(0.9) : (ThemeService.isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
                     borderRadius: BorderRadius.circular(16),
-                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4, offset: const Offset(0, 2))],
+                    boxShadow: [BoxShadow(color: AppColors.cardShadow, blurRadius: 4, offset: const Offset(0, 2))],
                   ),
                   child: Stack(
                     children: [
@@ -299,11 +306,11 @@ class _PosScreenState extends State<PosScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.table_restaurant, size: 48, color: isActive ? Colors.white : Colors.grey.shade800),
+                            Icon(Icons.table_restaurant, size: 48, color: isActive ? Colors.white : AppColors.textGray),
                             const SizedBox(height: 8),
-                            Text(table['name'], style: TextStyle(color: isActive ? Colors.white : Colors.grey.shade900, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
+                            Text(table['name'], style: TextStyle(color: isActive ? Colors.white : AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
                             const SizedBox(height: 4),
-                            Text(isActive ? 'مشغولة' : 'متاحة', style: TextStyle(color: isActive ? Colors.white70 : Colors.grey.shade700, fontSize: AppSizes.fontNormal)),
+                            Text(isActive ? 'مشغولة' : 'متاحة', style: TextStyle(color: isActive ? Colors.white70 : AppColors.textGray, fontSize: AppSizes.fontNormal)),
                             if (isActive && table['total_price'] != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 8.0),
@@ -446,11 +453,11 @@ class _PosScreenState extends State<PosScreen> {
           return AlertDialog(
             backgroundColor: AppColors.surface,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: const Row(
+            title: Row(
               children: [
                 Icon(Icons.add_business, color: AppColors.primaryLight),
                 SizedBox(width: 8),
-                Text('إضافة منتج جديد للمخزن', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontXLarge)),
+                Text('إضافة منتج جديد للمخزن', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
               ],
             ),
             content: SingleChildScrollView(
@@ -459,10 +466,10 @@ class _PosScreenState extends State<PosScreen> {
                 children: [
                   TextField(
                     controller: nameCtrl,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'اسم المنتج',
-                      labelStyle: const TextStyle(color: AppColors.textGray),
+                      labelStyle: TextStyle(color: AppColors.textGray),
                       filled: true,
                       fillColor: AppColors.background,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -475,10 +482,10 @@ class _PosScreenState extends State<PosScreen> {
                       Expanded(
                         child: TextField(
                           controller: barcodeCtrl,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'الباركود (رقم تسلسلي)',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -491,7 +498,7 @@ class _PosScreenState extends State<PosScreen> {
                           backgroundColor: AppColors.border,
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
                         ),
-                        icon: const Icon(Icons.qr_code, color: AppColors.primaryLight, size: 18),
+                        icon: Icon(Icons.qr_code, color: AppColors.primaryLight, size: 18),
                         label: const Text('توليد', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
                         onPressed: () {
                           setDialogState(() {
@@ -509,12 +516,12 @@ class _PosScreenState extends State<PosScreen> {
                       Expanded(
                         child: TextField(
                           controller: imageCtrl,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'رابط الصورة أو مسارها',
                             hintText: 'https://... أو اختر من الجهاز',
-                            hintStyle: const TextStyle(color: AppColors.textHint, fontSize: AppSizes.fontSmall),
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            hintStyle: TextStyle(color: AppColors.textHint, fontSize: AppSizes.fontSmall),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -527,7 +534,7 @@ class _PosScreenState extends State<PosScreen> {
                           backgroundColor: AppColors.border,
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
                         ),
-                        icon: const Icon(Icons.folder_open, color: AppColors.primaryLight, size: 18),
+                        icon: Icon(Icons.folder_open, color: AppColors.primaryLight, size: 18),
                         label: const Text('تصفح الجهاز', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
                         onPressed: () async {
                           final base64Image = await FilePickerHelper.pickImageAsBase64();
@@ -548,10 +555,10 @@ class _PosScreenState extends State<PosScreen> {
                         child: TextField(
                           controller: purchaseCtrl,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'سعر الشراء',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -563,10 +570,10 @@ class _PosScreenState extends State<PosScreen> {
                         child: TextField(
                           controller: sellingCtrl,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'سعر البيع',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -583,10 +590,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: TextField(
                             controller: stockCtrl,
                             keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
                               labelText: 'الكمية الأوليّة',
-                              labelStyle: const TextStyle(color: AppColors.textGray),
+                              labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -598,10 +605,10 @@ class _PosScreenState extends State<PosScreen> {
                       Expanded(
                         child: TextField(
                           controller: categoryCtrl,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'التصنيف (القسم)',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -624,7 +631,7 @@ class _PosScreenState extends State<PosScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text('يباع بالوزن؟', style: TextStyle(color: Colors.white)),
+                              Text('يباع بالوزن؟', style: TextStyle(color: AppColors.textPrimary)),
                               Switch(
                                 value: isWeight,
                                 activeColor: AppColors.primaryLight,
@@ -644,10 +651,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: TextField(
                             controller: weightUnitCtrl,
                             keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
                               labelText: 'الوحدة لسعر البيع (غرام)',
-                              labelStyle: const TextStyle(color: AppColors.textGray),
+                              labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -659,10 +666,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: TextField(
                             controller: weightIncCtrl,
                             keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
                               labelText: 'خطوة الوزن (+/-)',
-                              labelStyle: const TextStyle(color: AppColors.textGray),
+                              labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -678,7 +685,7 @@ class _PosScreenState extends State<PosScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
+                child: Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
@@ -729,9 +736,9 @@ class _PosScreenState extends State<PosScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: Row(
               children: [
-                const Icon(Icons.edit, color: AppColors.primaryLight),
+                Icon(Icons.edit, color: AppColors.primaryLight),
                 const SizedBox(width: 8),
-                Text('تعديل بيانات المنتج: ${product.name}', style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontXLarge)),
+                Text('تعديل بيانات المنتج: ${product.name}', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
               ],
             ),
             content: SingleChildScrollView(
@@ -740,10 +747,10 @@ class _PosScreenState extends State<PosScreen> {
                 children: [
                   TextField(
                     controller: nameCtrl,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'اسم المنتج',
-                      labelStyle: const TextStyle(color: AppColors.textGray),
+                      labelStyle: TextStyle(color: AppColors.textGray),
                       filled: true,
                       fillColor: AppColors.background,
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -756,10 +763,10 @@ class _PosScreenState extends State<PosScreen> {
                       Expanded(
                         child: TextField(
                           controller: barcodeCtrl,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'الباركود (رقم تسلسلي)',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -772,7 +779,7 @@ class _PosScreenState extends State<PosScreen> {
                           backgroundColor: AppColors.border,
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
                         ),
-                        icon: const Icon(Icons.qr_code, color: AppColors.primaryLight, size: 18),
+                        icon: Icon(Icons.qr_code, color: AppColors.primaryLight, size: 18),
                         label: const Text('توليد', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
                         onPressed: () {
                           setDialogState(() {
@@ -789,10 +796,10 @@ class _PosScreenState extends State<PosScreen> {
                       Expanded(
                         child: TextField(
                           controller: imageCtrl,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'رابط الصورة أو مسارها',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -805,7 +812,7 @@ class _PosScreenState extends State<PosScreen> {
                           backgroundColor: AppColors.border,
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
                         ),
-                        icon: const Icon(Icons.folder_open, color: AppColors.primaryLight, size: 18),
+                        icon: Icon(Icons.folder_open, color: AppColors.primaryLight, size: 18),
                         label: const Text('تصفح الجهاز', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
                         onPressed: () async {
                           final base64Image = await FilePickerHelper.pickImageAsBase64();
@@ -826,10 +833,10 @@ class _PosScreenState extends State<PosScreen> {
                         child: TextField(
                           controller: purchaseCtrl,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'سعر الشراء',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -841,10 +848,10 @@ class _PosScreenState extends State<PosScreen> {
                         child: TextField(
                           controller: sellingCtrl,
                           keyboardType: TextInputType.number,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'سعر البيع',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -861,10 +868,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: TextField(
                             controller: stockCtrl,
                             keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
                               labelText: 'الكمية في المخزن',
-                              labelStyle: const TextStyle(color: AppColors.textGray),
+                              labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -876,10 +883,10 @@ class _PosScreenState extends State<PosScreen> {
                       Expanded(
                         child: TextField(
                           controller: categoryCtrl,
-                          style: const TextStyle(color: Colors.white),
+                          style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'التصنيف (القسم)',
-                            labelStyle: const TextStyle(color: AppColors.textGray),
+                            labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -902,7 +909,7 @@ class _PosScreenState extends State<PosScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Text('يباع بالوزن؟', style: TextStyle(color: Colors.white)),
+                              Text('يباع بالوزن؟', style: TextStyle(color: AppColors.textPrimary)),
                               Switch(
                                 value: isWeight,
                                 activeColor: AppColors.primaryLight,
@@ -922,10 +929,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: TextField(
                             controller: weightUnitCtrl,
                             keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
                               labelText: 'الوحدة لسعر البيع (غرام)',
-                              labelStyle: const TextStyle(color: AppColors.textGray),
+                              labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -937,10 +944,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: TextField(
                             controller: weightIncCtrl,
                             keyboardType: TextInputType.number,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
                               labelText: 'خطوة الوزن (+/-)',
-                              labelStyle: const TextStyle(color: AppColors.textGray),
+                              labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
                               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -956,7 +963,7 @@ class _PosScreenState extends State<PosScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
+                child: Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
@@ -989,56 +996,113 @@ class _PosScreenState extends State<PosScreen> {
   void _showRestockDialog(ProductModel product) {
     final qtyCtrl = TextEditingController(text: '10');
     final purchasePriceCtrl = TextEditingController(text: product.purchasePrice.toStringAsFixed(0));
+    final sellingPriceCtrl = TextEditingController(text: product.sellingPrice.toStringAsFixed(0));
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: Text('توريد وشراء شحنة إضافية: ${product.name}',
-            style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontHeader)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
           children: [
-            TextField(
-              controller: qtyCtrl,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'الكمية المضافة للمخزن',
-                labelStyle: const TextStyle(color: AppColors.textGray),
-                filled: true,
-                fillColor: AppColors.background,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
               ),
+              child: Icon(Icons.add_business_outlined, color: AppColors.primaryLight, size: 22),
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: purchasePriceCtrl,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'سعر الشراء للشحنة الجديدة',
-                labelStyle: const TextStyle(color: AppColors.textGray),
-                filled: true,
-                fillColor: AppColors.background,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'توريد وشراء شحنة إضافية: ${product.name}',
+                style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
         ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: qtyCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'الكمية المضافة للمخزن',
+                  labelStyle: TextStyle(color: AppColors.textGray),
+                  prefixIcon: Icon(Icons.inventory_2_outlined, color: AppColors.primaryLight, size: 20),
+                  filled: true,
+                  fillColor: AppColors.background,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: purchasePriceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'سعر الشراء للشحنة (تكلفة القطعة)',
+                  labelStyle: TextStyle(color: AppColors.textGray),
+                  prefixIcon: const Icon(Icons.shopping_cart_checkout, color: AppColors.warning, size: 20),
+                  helperText: 'سعر الشراء الحالي: ${product.purchasePrice.toStringAsFixed(0)} د.ع',
+                  helperStyle: TextStyle(color: AppColors.textGray, fontSize: 11),
+                  filled: true,
+                  fillColor: AppColors.background,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: sellingPriceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  labelText: 'سعر البيع للزبون (تحديث السعر)',
+                  labelStyle: TextStyle(color: AppColors.textGray),
+                  prefixIcon: const Icon(Icons.sell_outlined, color: AppColors.success, size: 20),
+                  helperText: 'سعر البيع الحالي: ${product.sellingPrice.toStringAsFixed(0)} د.ع (يمكن تعديله)',
+                  helperStyle: TextStyle(color: AppColors.primaryLight, fontSize: 11),
+                  filled: true,
+                  fillColor: AppColors.background,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.success,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
             onPressed: () async {
               final qty = double.tryParse(qtyCtrl.text) ?? 0;
-              final price = double.tryParse(purchasePriceCtrl.text) ?? product.purchasePrice;
+              final pPrice = double.tryParse(purchasePriceCtrl.text) ?? product.purchasePrice;
+              final sPrice = double.tryParse(sellingPriceCtrl.text) ?? product.sellingPrice;
               if (qty > 0) {
                 Navigator.pop(ctx);
-                await ApiService.restockProduct(product.id, qty, price);
+                await ApiService.restockProduct(
+                  product.id,
+                  qty,
+                  pPrice,
+                  sellingPrice: sPrice,
+                );
                 _loadProducts();
               }
             },
-            child: const Text('تأكيد التوريد', style: TextStyle(color: Colors.white)),
+            child: const Text('تأكيد التوريد والأسعار', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -1053,31 +1117,127 @@ class _PosScreenState extends State<PosScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: Text('سجل المشتريات: ${product.name}',
-            style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontHeader)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.history, color: AppColors.primaryLight, size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'سجل مشتريات: ${product.name}',
+                style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         content: SizedBox(
-          width: double.maxFinite,
-          height: 300,
+          width: 500,
+          height: 380,
           child: history.isEmpty
-              ? const Center(child: Text('لا توجد سجلات شراء سابقة', style: TextStyle(color: AppColors.textGray)))
+              ? Center(child: Text('لا توجد سجلات شراء سابقة', style: TextStyle(color: AppColors.textGray)))
               : ListView.builder(
                   itemCount: history.length,
                   itemBuilder: (context, index) {
                     final h = history[index];
-                    return Card(
-                      color: AppColors.background,
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        title: Text('الكمية: ${h.quantity}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        subtitle: Text('التاريخ: ${h.createdAt}', style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
-                        trailing: Text('السعر: ${h.purchasePrice.toStringAsFixed(0)}', style: const TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold)),
+                    final isInitial = h.note.contains('أول') || index == history.length - 1;
+                    final qtyStr = (h.quantity % 1 == 0) ? h.quantity.toInt().toString() : h.quantity.toString();
+                    final labelText = isInitial ? 'أول عملية شراء (إضافة المنتج)' : (h.note.isNotEmpty ? h.note : 'توريد شحنة إضافية');
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.background,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isInitial ? AppColors.success.withOpacity(0.4) : AppColors.border,
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: isInitial ? AppColors.stockHighBg : AppColors.primaryLight.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      isInitial ? Icons.star : Icons.inventory_2_outlined,
+                                      size: 13,
+                                      color: isInitial ? AppColors.stockHighText : AppColors.primaryLight,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      labelText,
+                                      style: TextStyle(
+                                        color: isInitial ? AppColors.stockHighText : AppColors.primaryLight,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Text(
+                                '${h.purchasePrice.toStringAsFixed(0)} د.ع',
+                                style: const TextStyle(
+                                  color: AppColors.success,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.shopping_bag_outlined, size: 15, color: AppColors.textGray),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'الكمية: $qtyStr',
+                                    style: TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                              Row(
+                                children: [
+                                  Icon(Icons.access_time, size: 14, color: AppColors.textGray),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    h.createdAt,
+                                    style: TextStyle(color: AppColors.textGray, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     );
                   },
                 ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إغلاق', style: TextStyle(color: AppColors.textGray))),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('إغلاق', style: TextStyle(color: AppColors.textGray))),
         ],
       ),
     );
@@ -1088,8 +1248,8 @@ class _PosScreenState extends State<PosScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('تأكيد حذف المنتج', style: TextStyle(color: Colors.white)),
-        content: Text('هل أنت متأكد من حذف ${product.name}؟', style: const TextStyle(color: AppColors.textDialog)),
+        title: Text('تأكيد حذف المنتج', style: TextStyle(color: AppColors.textPrimary)),
+        content: Text('هل أنت متأكد من حذف ${product.name}؟', style: TextStyle(color: AppColors.textDialog)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
           ElevatedButton(
@@ -1248,7 +1408,7 @@ class _PosScreenState extends State<PosScreen> {
                       children: [
                         Expanded(
                           child: TextField(
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: AppColors.textPrimary),
                             onChanged: (val) {
                               if (_searchDebounce?.isActive ?? false) _searchDebounce!.cancel();
                               _searchDebounce = Timer(const Duration(milliseconds: 400), () {
@@ -1260,8 +1420,8 @@ class _PosScreenState extends State<PosScreen> {
                             },
                             decoration: InputDecoration(
                               hintText: 'بحث فوري في المنتجات (الاسم، التصنيف)...',
-                              hintStyle: const TextStyle(color: AppColors.textHint),
-                              prefixIcon: const Icon(Icons.search, color: AppColors.primaryLight),
+                              hintStyle: TextStyle(color: AppColors.textHint),
+                              prefixIcon: Icon(Icons.search, color: AppColors.primaryLight),
                               filled: true,
                               fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1292,15 +1452,15 @@ class _PosScreenState extends State<PosScreen> {
                   // Products Grid (4 items per row on desktop)
                   Expanded(
                     child: _isLoading
-                        ? const Center(child: CircularProgressIndicator(color: AppColors.primaryLight))
+                        ? Center(child: CircularProgressIndicator(color: AppColors.primaryLight))
                         : _products.isEmpty
                             ? Center(
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.inventory_2_outlined, size: 64, color: Colors.white.withOpacity(0.3)),
+                                    Icon(Icons.inventory_2_outlined, size: 64, color: AppColors.textGray.withOpacity(0.3)),
                                     const SizedBox(height: 12),
-                                    const Text('لا توجد منتجات مطابقة حالياً', style: TextStyle(color: AppColors.textGray)),
+                                    Text('لا توجد منتجات مطابقة حالياً', style: TextStyle(color: AppColors.textGray)),
                                   ],
                                 ),
                               )
@@ -1341,7 +1501,7 @@ class _PosScreenState extends State<PosScreen> {
                                       ),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.black.withOpacity(0.2),
+                                          color: AppColors.cardShadow,
                                           blurRadius: 6,
                                           offset: const Offset(0, 3),
                                         ),
@@ -1395,21 +1555,21 @@ class _PosScreenState extends State<PosScreen> {
                                                   product.name,
                                                   maxLines: 1,
                                                   overflow: TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontTitle),
+                                                  style: TextStyle(
+                                                      color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontTitle),
                                                 ),
                                                 Row(
                                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                                   children: [
                                                     if (appPermissions.canViewPurchasePrice)
                                                       Text('شراء: ${product.purchasePrice.toStringAsFixed(0)}',
-                                                          style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal))
+                                                          style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal))
                                                     else
-                                                      const Text('شراء: ***', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                                                      Text('شراء: ***', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
                                                     
                                                     if (appPermissions.canViewSellingPrice)
                                                       Text('بيع: ${product.sellingPrice.toStringAsFixed(0)}',
-                                                          style: const TextStyle(
+                                                          style: TextStyle(
                                                               color: AppColors.primaryLight,
                                                               fontWeight: FontWeight.bold,
                                                               fontSize: AppSizes.fontMedium)),
@@ -1435,8 +1595,8 @@ class _PosScreenState extends State<PosScreen> {
                                                           controller: cardCtrl,
                                                           keyboardType: TextInputType.number,
                                                           textAlign: TextAlign.center,
-                                                          style: const TextStyle(
-                                                              color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                                                          style: TextStyle(
+                                                              color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
                                                           decoration: InputDecoration(
                                                             filled: true,
                                                             fillColor: AppColors.background,
@@ -1466,8 +1626,8 @@ class _PosScreenState extends State<PosScreen> {
                                                     children: [
                                                       TextButton.icon(
                                                         style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 30)),
-                                                        icon: const Icon(Icons.edit, color: AppColors.primaryLight, size: 14),
-                                                        label: const Text('تعديل', style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontSmall)),
+                                                        icon: Icon(Icons.edit, color: AppColors.primaryLight, size: 14),
+                                                        label: Text('تعديل', style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontSmall)),
                                                         onPressed: () => _showEditProductDialog(product),
                                                       ),
                                                       TextButton.icon(
@@ -1478,8 +1638,8 @@ class _PosScreenState extends State<PosScreen> {
                                                       ),
                                                       TextButton.icon(
                                                         style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 30)),
-                                                        icon: const Icon(Icons.history, color: AppColors.historyIcon, size: 14),
-                                                        label: const Text('السجل', style: TextStyle(color: AppColors.historyIcon, fontSize: AppSizes.fontSmall)),
+                                                        icon: Icon(Icons.history, color: AppColors.historyIcon, size: 14),
+                                                        label: Text('السجل', style: TextStyle(color: AppColors.historyIcon, fontSize: AppSizes.fontSmall)),
                                                         onPressed: () => _showRestockHistoryDialog(product),
                                                       ),
                                                       TextButton.icon(
@@ -1544,12 +1704,12 @@ class _PosScreenState extends State<PosScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Row(
+                        Row(
                           children: [
                             Icon(Icons.shopping_cart, color: AppColors.primaryLight),
                             SizedBox(width: 8),
                             Text('تفاصيل الطلب والسلة (25%)',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
+                                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
                           ],
                         ),
                         if (_cart.isNotEmpty)
@@ -1574,9 +1734,9 @@ class _PosScreenState extends State<PosScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.remove_shopping_cart_outlined, size: 48, color: Colors.white.withOpacity(0.2)),
+                                Icon(Icons.remove_shopping_cart_outlined, size: 48, color: AppColors.textGray.withOpacity(0.3)),
                                 const SizedBox(height: 8),
-                                const Text('السلة فارغة. اضغط + في كارت المنتج لإضافته',
+                                Text('السلة فارغة. اضغط + في كارت المنتج لإضافته',
                                     style: TextStyle(color: AppColors.textHint, fontSize: AppSizes.fontMedium)),
                               ],
                             ),
@@ -1757,12 +1917,17 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
   late TextEditingController _sumFinalCtrl;
   bool _isExpanded = false;
 
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     _sumSellCtrl = TextEditingController(text: widget.totalSellingSum.toStringAsFixed(0));
     _sumDiscCtrl = TextEditingController(text: widget.totalDiscountSum.toStringAsFixed(0));
     _sumFinalCtrl = TextEditingController(text: widget.totalFinalAmount.toStringAsFixed(0));
+    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
   }
 
   @override
@@ -1780,6 +1945,7 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
 
   @override
   void dispose() {
+    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
     _sumSellCtrl.dispose();
     _sumDiscCtrl.dispose();
     _sumFinalCtrl.dispose();
@@ -1804,15 +1970,15 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'المجموع الكلي للطلب',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
                   ),
                 ),
                 Text(
                   '(${widget.totalItems} منتجات)',
-                  style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal),
+                  style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal),
                 ),
               ],
             ),
@@ -1822,10 +1988,10 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('السعر الكلي:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                Text('السعر الكلي:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
                 Text(
                   '${widget.totalSellingSum.toStringAsFixed(0)} د.ع',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
                 ),
               ],
             ),
@@ -1849,21 +2015,21 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('السعر النهائي للطلب:', style: TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold, fontSize: AppSizes.fontNormal)),
+                Text('السعر النهائي للطلب:', style: TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold, fontSize: AppSizes.fontNormal)),
                 Text(
                   '${widget.totalFinalAmount.toStringAsFixed(0)} د.ع',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
                 ),
               ],
             ),
             
-            const Divider(color: Colors.white12, height: 24),
+            Divider(color: AppColors.border, height: 24),
             
             // Show Details Button
             Center(
               child: TextButton.icon(
                 icon: Icon(_isExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.primaryLight, size: 20),
-                label: Text(_isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل', style: const TextStyle(color: AppColors.primaryLight)),
+                label: Text(_isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل', style: TextStyle(color: AppColors.primaryLight)),
                 onPressed: () {
                   setState(() {
                     _isExpanded = !_isExpanded;
@@ -1879,8 +2045,8 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('مجموع سعر الشراء:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
-                    Text('${widget.totalCostSum.toStringAsFixed(0)} (ثابتة)', style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal)),
+                    Text('مجموع سعر الشراء:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                    Text('${widget.totalCostSum.toStringAsFixed(0)} (ثابتة)', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal)),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1889,9 +2055,9 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               // Edit Total Selling
               Row(
                 children: [
-                  const SizedBox(width: 90, child: Text('سعر البيع الكلي:', style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal))),
+                  SizedBox(width: 90, child: Text('سعر البيع الكلي:', style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal))),
                   IconButton(
-                    icon: const Icon(Icons.remove_circle, color: AppColors.primaryLight, size: 20),
+                    icon: Icon(Icons.remove_circle, color: AppColors.primaryLight, size: 20),
                     onPressed: () => widget.onUpdateTotalSelling(widget.totalSellingSum - 500),
                   ),
                   Expanded(
@@ -1901,8 +2067,8 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                         controller: _sumSellCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
+                        style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
                           contentPadding: EdgeInsets.symmetric(vertical: 2),
@@ -1916,7 +2082,7 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add_circle, color: AppColors.primaryLight, size: 20),
+                    icon: Icon(Icons.add_circle, color: AppColors.primaryLight, size: 20),
                     onPressed: () => widget.onUpdateTotalSelling(widget.totalSellingSum + 500),
                   ),
                 ],
@@ -1939,7 +2105,7 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
                           contentPadding: EdgeInsets.symmetric(vertical: 2),
@@ -1963,7 +2129,7 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               // Edit Final Amount
               Row(
                 children: [
-                  const SizedBox(width: 90, child: Text('السعر النهائي:', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold))),
+                  SizedBox(width: 90, child: Text('السعر النهائي:', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold))),
                   IconButton(
                     icon: const Icon(Icons.remove_circle, color: Colors.white, size: 20),
                     onPressed: () => widget.onUpdateFinalTotal((widget.totalFinalAmount - 250).clamp(0, 9999999)),
@@ -1975,8 +2141,8 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                         controller: _sumFinalCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontLarge, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
+                        style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontLarge, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
                           contentPadding: EdgeInsets.symmetric(vertical: 2),
@@ -1998,7 +2164,7 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               const SizedBox(height: 12),
               
               if (widget.canViewProfit) ...[
-                const Divider(color: Colors.white12, height: 16),
+                Divider(color: AppColors.border, height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -2039,10 +2205,15 @@ class _CartItemWidgetState extends State<CartItemWidget> {
   late TextEditingController _discountCtrl;
   late TextEditingController _totalCtrl;
 
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     _initControllers();
+    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
   }
 
   void _initControllers() {
@@ -2075,6 +2246,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
 
   @override
   void dispose() {
+    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
     _qtyCtrl.dispose();
     _unitDiscountCtrl.dispose();
     _discountCtrl.dispose();
@@ -2103,8 +2275,8 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                 Expanded(
                   child: Text(
                     widget.item.product.name,
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                    style: TextStyle(
+                        color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
                   ),
                 ),
                 IconButton(
@@ -2118,7 +2290,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             // 1. Quantity Field
             Row(
               children: [
-                const SizedBox(width: 80, child: Text('الكمية/الوزن:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal))),
+                SizedBox(width: 80, child: Text('الكمية/الوزن:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal))),
                 IconButton(
                   icon: const Icon(Icons.remove_circle, color: AppColors.danger, size: 20),
                   onPressed: () => widget.onUpdateQuantity(widget.item.product, widget.item.quantity - (widget.item.product.isWeight ? widget.item.product.weightIncrementStep : 1.0)),
@@ -2130,8 +2302,8 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                       controller: _qtyCtrl,
                       keyboardType: TextInputType.number,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                      decoration: const InputDecoration(
+                      style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                      decoration: InputDecoration(
                         filled: true,
                         fillColor: AppColors.surface,
                         contentPadding: EdgeInsets.symmetric(vertical: 2),
@@ -2156,10 +2328,10 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('المبلغ:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                Text('المبلغ:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
                 Text(
                   '${widget.item.totalSellingAmount.toStringAsFixed(0)} د.ع',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
                 ),
               ],
             ),
@@ -2184,21 +2356,21 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('السعر النهائي:', style: TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold, fontSize: AppSizes.fontNormal)),
+                Text('السعر النهائي:', style: TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold, fontSize: AppSizes.fontNormal)),
                 Text(
                   '${widget.item.totalPrice.toStringAsFixed(0)} د.ع',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
                 ),
               ],
             ),
             
-            const Divider(color: Colors.white12, height: 24),
+            Divider(color: AppColors.border, height: 24),
             
             // Show Details Button
             Center(
               child: TextButton.icon(
                 icon: Icon(_isExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.primaryLight, size: 20),
-                label: Text(_isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل', style: const TextStyle(color: AppColors.primaryLight)),
+                label: Text(_isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل', style: TextStyle(color: AppColors.primaryLight)),
                 onPressed: () {
                   setState(() {
                     _isExpanded = !_isExpanded;
@@ -2228,7 +2400,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
                           contentPadding: EdgeInsets.symmetric(vertical: 2),
@@ -2272,7 +2444,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
                           contentPadding: EdgeInsets.symmetric(vertical: 2),
@@ -2300,7 +2472,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
               // Total Price Editable
               Row(
                 children: [
-                  const SizedBox(width: 80, child: Text('السعر النهائي:', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold))),
+                  SizedBox(width: 80, child: Text('السعر النهائي:', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold))),
                   IconButton(
                     icon: const Icon(Icons.remove, color: Colors.white, size: 18),
                     onPressed: () {
@@ -2315,8 +2487,8 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         controller: _totalCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
+                        style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
                           contentPadding: EdgeInsets.symmetric(vertical: 2),

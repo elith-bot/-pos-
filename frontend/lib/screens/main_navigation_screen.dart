@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
+import '../services/theme_service.dart';
 import 'pos_screen.dart';
 
 import 'expenses_screen.dart';
@@ -24,10 +25,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
     _tabController.dispose();
     super.dispose();
   }
@@ -40,31 +47,31 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.surface,
-        elevation: 2,
+        elevation: 1,
         title: Row(
           children: [
-            const Icon(Icons.point_of_sale, color: AppColors.primaryLight, size: 26),
+            Icon(Icons.point_of_sale, color: AppColors.primaryLight, size: 26),
             const SizedBox(width: 10),
-            const Text(
+            Text(
               'نظام الكاشير والمبيعات المتكامل',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontXLarge),
+              style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontXLarge),
             ),
             const SizedBox(width: 16),
             if (currentUser != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0369A1).withOpacity(0.3),
+                  color: AppColors.primaryLight.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: AppColors.primaryLight),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.person, size: 14, color: AppColors.primaryLight),
+                    Icon(Icons.person, size: 14, color: AppColors.primaryLight),
                     const SizedBox(width: 4),
                     Text(
                       '${currentUser.fullName} (${currentUser.roleArabic})',
-                      style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                      style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -72,6 +79,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
           ],
         ),
         actions: [
+          ValueListenableBuilder<ThemeMode>(
+            valueListenable: ThemeService.themeModeNotifier,
+            builder: (context, mode, _) {
+              final isDark = mode == ThemeMode.dark;
+              return Tooltip(
+                message: isDark ? 'التحويل للوضع النهاري (Light Mode)' : 'التحويل للوضع الليلي (Dark Mode)',
+                child: IconButton(
+                  icon: Icon(
+                    isDark ? Icons.light_mode : Icons.dark_mode_outlined,
+                    color: isDark ? const Color(0xFFFBBF24) : AppColors.primaryLight,
+                    size: 22,
+                  ),
+                  onPressed: () {
+                    ThemeService.toggleTheme();
+                  },
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout, color: AppColors.danger),
             tooltip: 'تسجيل الخروج',
@@ -86,7 +112,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
               }
             },
           ),
-
         ],
         bottom: TabBar(
           controller: _tabController,
@@ -106,7 +131,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
       ),
       body: TabBarView(
         controller: _tabController,
-        children: const [
+        children: [
           PosScreen(),
           ExpensesScreen(),
           AnalyticsScreen(),

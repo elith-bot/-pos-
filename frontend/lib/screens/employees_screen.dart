@@ -1,3 +1,4 @@
+import '../services/theme_service.dart';
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../models/user_model.dart';
@@ -15,7 +16,13 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   List<UserModel> _users = [];
 
   @override
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void initState() {
+    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
     super.initState();
     _loadUsers();
   }
@@ -38,7 +45,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text('تغيير دور الموظف: ${user.fullName}', style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontXLarge)),
+        title: Text('تغيير دور الموظف: ${user.fullName}', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
         content: StatefulBuilder(
           builder: (context, setDialogState) {
             return Column(
@@ -46,9 +53,9 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               children: [
                 DropdownButton<String>(
                   value: selectedRole,
-                  dropdownColor: AppColors.background,
+                  dropdownColor: AppColors.surface,
                   isExpanded: true,
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: AppColors.textPrimary),
                   items: const [
                     DropdownMenuItem(value: 'developer', child: Text('المطور / المبرمج (صلاحيات مطلقة)')),
                     DropdownMenuItem(value: 'owner', child: Text('المالك (إدارة كل الأدوار عدا المطور)')),
@@ -64,7 +71,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
           },
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('إلغاء', style: TextStyle(color: AppColors.textGray))),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
             onPressed: () async {
@@ -72,7 +79,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               await ApiService.updateUserRole(user.id, selectedRole);
               _loadUsers();
             },
-            child: const Text('تأكيد التغيير', style: TextStyle(color: Colors.white)),
+            child: const Text('تأكيد التغيير', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -94,15 +101,15 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Row(
+                  Row(
                     children: [
                       Icon(Icons.badge, color: AppColors.primaryLight, size: 32),
-                      SizedBox(width: 10),
+                      const SizedBox(width: 10),
                       Text('إدارة الموظفين والأدوار',
-                          style: TextStyle(color: Colors.white, fontSize: AppSizes.fontHuge, fontWeight: FontWeight.bold)),
+                          style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHuge, fontWeight: FontWeight.bold)),
                     ],
                   ),
-                  IconButton(icon: const Icon(Icons.refresh, color: AppColors.primaryLight), onPressed: _loadUsers),
+                  IconButton(icon: Icon(Icons.refresh, color: AppColors.primaryLight), onPressed: _loadUsers),
                 ],
               ),
               const SizedBox(height: 20),
@@ -110,9 +117,9 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
               // Users List
               Expanded(
                 child: _isLoading
-                    ? const Center(child: CircularProgressIndicator(color: AppColors.primaryLight))
+                    ? Center(child: CircularProgressIndicator(color: AppColors.primaryLight))
                     : _users.isEmpty
-                        ? const Center(child: Text('لا يوجد موظفون مسجلون', style: TextStyle(color: AppColors.textGray)))
+                        ? Center(child: Text('لا يوجد موظفون مسجلون', style: TextStyle(color: AppColors.textGray)))
                         : ListView.builder(
                             itemCount: _users.length,
                             itemBuilder: (ctx, idx) {
@@ -141,30 +148,30 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
                                   title: Row(
                                     children: [
                                       Text(user.fullName,
-                                          style: const TextStyle(
-                                              color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
+                                          style: TextStyle(
+                                              color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
                                       const SizedBox(width: 10),
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                                         decoration: BoxDecoration(
-                                          color: const Color(0xFF0369A1).withOpacity(0.3),
+                                          color: AppColors.primaryLight.withOpacity(0.15),
                                           borderRadius: BorderRadius.circular(12),
                                           border: Border.all(color: AppColors.primaryLight),
                                         ),
                                         child: Text(user.roleArabic,
-                                            style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: AppSizes.fontNormal)),
+                                            style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold)),
                                       ),
                                     ],
                                   ),
                                   subtitle: Text('اسم المستخدم: ${user.username} • تاريخ التسجيل: ${user.createdAt}',
-                                      style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                                      style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
                                   trailing: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       ElevatedButton.icon(
-                                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.border),
+                                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
                                         icon: const Icon(Icons.manage_accounts, size: 16, color: Colors.white),
-                                        label: const Text('تغيير الدور', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal)),
+                                        label: const Text('تغيير الدور', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold)),
                                         onPressed: () => _changeRole(user),
                                       ),
                                       const SizedBox(width: 8),
@@ -190,5 +197,10 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
         ),
       ),
     );
+  }
+  @override
+  void dispose() {
+    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
+    super.dispose();
   }
 }

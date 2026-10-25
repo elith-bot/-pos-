@@ -155,6 +155,7 @@ class RestockHistory(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False)
     quantity = db.Column(db.Float, nullable=False)
     purchase_price = db.Column(db.Float, nullable=False)
+    note = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -163,6 +164,7 @@ class RestockHistory(db.Model):
             'product_id': self.product_id,
             'quantity': self.quantity,
             'purchase_price': round(self.purchase_price, 2),
+            'note': self.note or '',
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else ''
         }
 

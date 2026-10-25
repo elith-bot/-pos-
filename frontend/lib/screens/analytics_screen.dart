@@ -1,304 +1,635 @@
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import '../services/permissions_service.dart';
 import '../core/app_theme.dart';
+import '../services/api_service.dart';
+import '../services/theme_service.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
-
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
 }
 
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
-  bool _isLoading = true;
-  Map<String, dynamic> _stats = {};
-  List<Map<String, dynamic>> _sales = [];
+  bool loading = true;
+  String period = 'today';
+  DateTime? start, end;
+  Map<String, dynamic> data = {};
+  final periods = const {
+    'today': 'اليوم',
+    'yesterday': 'أمس',
+    'week': 'آخر 7 أيام',
+    'month': 'هذا الشهر',
+    'year': 'هذه السنة',
+    'all': 'كل الفترات',
+    'custom': 'مخصصة',
+  };
 
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    ThemeService.themeModeNotifier.addListener(themeChanged);
+    load();
   }
 
-  Future<void> _loadStats() async {
-    setState(() => _isLoading = true);
-    final data = await ApiService.getStats();
-    final salesData = await ApiService.getSales();
-    if (mounted) {
+  void themeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  String date(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  String money(dynamic v) {
+    final n = v is num ? v : double.tryParse('$v') ?? 0;
+    return '${n.round()} د.ع';
+  }
+
+  Future<void> load() async {
+    setState(() => loading = true);
+    final r = await ApiService.getStats(
+      period: period,
+      startDate: start == null ? null : date(start!),
+      endDate: end == null ? null : date(end!),
+    );
+    if (mounted)
       setState(() {
-        _stats = data;
-        _sales = salesData;
-        _isLoading = false;
+        data = r;
+        loading = false;
       });
+  }
+
+  Future<void> pick(bool isStart) async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: isStart
+          ? (start ?? DateTime.now())
+          : (end ?? DateTime.now()),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (d != null) {
+      setState(() {
+        if (isStart)
+          start = d;
+        else
+          end = d;
+      });
+      if (start != null && end != null) load();
     }
   }
 
-  void _showSaleDetails(Map<String, dynamic> sale) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        final items = (sale['items'] as List?) ?? [];
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: AlertDialog(
-            backgroundColor: AppColors.surface,
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('تفاصيل الطلب #${sale['id']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                IconButton(icon: const Icon(Icons.close, color: Colors.grey), onPressed: () => Navigator.pop(context)),
-              ],
+  Widget card(String title, String value, IconData icon, Color color) =>
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withOpacity(.28)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(.14),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color),
             ),
-            content: SizedBox(
-              width: 600,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('الكاشير: ${sale['cashier_name']}', style: const TextStyle(color: Colors.white70)),
-                        Text('التاريخ: ${sale['created_at']}', style: const TextStyle(color: Colors.white70)),
-                      ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppColors.textGray,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('الإجمالي: ${sale['total_selling_amount']} د.ع', style: const TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold)),
-                        Text('الدفع: ${sale['payment_method']}', style: const TextStyle(color: Colors.white70)),
-                      ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w900,
                     ),
-                    const Divider(color: Colors.white24, height: 30),
-                    const Text('المنتجات:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
-                    const SizedBox(height: 10),
-                    ...items.map((item) {
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppColors.background,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(child: Text('${item['product_name']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-                                Text('${item['quantity']}x', style: const TextStyle(color: Colors.white70)),
-                                const SizedBox(width: 20),
-                                Text('${item['total_price']} د.ع', style: const TextStyle(color: AppColors.historyIcon, fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 16,
-                              runSpacing: 8,
-                              children: [
-                                if (appPermissions.canViewPurchasePrice)
-                                  Text('شراء: ${item['unit_purchase_price']} د.ع', style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontSmall))
-                                else
-                                  const Text('شراء: ***', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontSmall)),
-                                
-                                if (appPermissions.canViewSellingPrice)
-                                  Text('بيع: ${item['unit_selling_price']} د.ع', style: const TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontSmall)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+  Widget section(String title, Widget child, IconData icon) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppColors.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: AppColors.primaryLight),
+            const SizedBox(width: 8),
+            Text(
+              title,
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        child,
+      ],
+    ),
+  );
 
-                                if (appPermissions.canViewDiscount)
-                                  Text('خصم: ${item['discount']} د.ع', style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontSmall)),
-                                
-                                if (appPermissions.canViewProfit)
-                                  Text('ربح الصنف: ${item['profit']} د.ع', style: const TextStyle(color: AppColors.success, fontSize: AppSizes.fontSmall))
-                                else
-                                  const Text('ربح الصنف: ***', style: TextStyle(color: AppColors.success, fontSize: AppSizes.fontSmall)),
-                              ],
-                            ),
-                          ],
+  Widget timeline() {
+    final rows = List<Map<String, dynamic>>.from(data['timeline'] ?? const []);
+    if (rows.isEmpty)
+      return Text(
+        'لا توجد بيانات ضمن هذه الفترة',
+        style: TextStyle(color: AppColors.textGray),
+      );
+    final max = rows
+        .map((r) => (r['revenue'] as num?)?.toDouble() ?? 0)
+        .fold<double>(0, (a, b) => a > b ? a : b);
+    final visible = rows.length > 31 ? rows.sublist(rows.length - 31) : rows;
+    return SizedBox(
+      height: 230,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: visible.map((r) {
+          final amount = (r['revenue'] as num?)?.toDouble() ?? 0;
+          final h = max == 0 ? 4.0 : amount / max * 160 + 4;
+          return Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Tooltip(
+                message:
+                    '${r['label']}\n${money(amount)}\nطلبات: ${r['orders'] ?? 0}',
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Container(
+                      height: h,
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryLight,
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(5),
                         ),
-                      );
-                    }).toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${r['label']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: AppColors.textGray, fontSize: 9),
+                    ),
                   ],
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        }).toList(),
+      ),
     );
   }
 
-  Widget _buildStatCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-    required Color bgColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.4)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget payments() {
+    final map = Map<String, dynamic>.from(data['payment_methods'] ?? {});
+    if (map.isEmpty)
+      return Text(
+        'لا توجد مدفوعات',
+        style: TextStyle(color: AppColors.textGray),
+      );
+    return Column(
+      children: map.entries.map((e) {
+        final v = Map<String, dynamic>.from(e.value);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Row(
             children: [
-              Text(title, style: const TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontLarge, fontWeight: FontWeight.bold)),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: bgColor, shape: BoxShape.circle),
-                child: Icon(icon, color: color, size: 24),
+              Expanded(
+                child: Text(
+                  e.key,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              Text(
+                money(v['amount']),
+                style: TextStyle(
+                  color: AppColors.success,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${v['count'] ?? 0} طلب',
+                style: TextStyle(color: AppColors.textGray),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Text(
-            value,
-            style: TextStyle(color: color, fontSize: AppSizes.fontHuge, fontWeight: FontWeight.bold),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget topProducts() {
+    final list = List<Map<String, dynamic>>.from(
+      data['top_products'] ?? const [],
+    );
+    if (list.isEmpty)
+      return Text(
+        'لا توجد مبيعات أصناف',
+        style: TextStyle(color: AppColors.textGray),
+      );
+    return Column(
+      children: list.asMap().entries.map((e) {
+        final p = e.value;
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: CircleAvatar(
+            backgroundColor: AppColors.primaryLight.withOpacity(.15),
+            child: Text(
+              '${e.key + 1}',
+              style: TextStyle(color: AppColors.primaryLight),
+            ),
           ),
-        ],
+          title: Text(
+            '${p['product_name']}',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          subtitle: Text(
+            'الكمية: ${p['quantity'] ?? 0}',
+            style: TextStyle(color: AppColors.textGray),
+          ),
+          trailing: Text(
+            money(p['total_revenue']),
+            style: TextStyle(
+              color: AppColors.success,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  void saleDetails(Map<String, dynamic> s) {
+    final items = List<Map<String, dynamic>>.from(s['items'] ?? const []);
+    showDialog(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text(
+            'تفاصيل الطلب #${s['id']}',
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          content: SizedBox(
+            width: 550,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${s['created_at']} • ${s['cashier_name']}',
+                    style: TextStyle(color: AppColors.textGray),
+                  ),
+                  const Divider(),
+                  ...items.map(
+                    (i) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        '${i['product_name']}',
+                        style: TextStyle(color: AppColors.textPrimary),
+                      ),
+                      subtitle: Text(
+                        'الكمية: ${i['quantity']}',
+                        style: TextStyle(color: AppColors.textGray),
+                      ),
+                      trailing: Text(
+                        money(i['total_price']),
+                        style: TextStyle(color: AppColors.primaryLight),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: AppColors.primaryLight))
-              : SingleChildScrollView(
+    final stats = Map<String, dynamic>.from(data['stats'] ?? {});
+    final sales = List<Map<String, dynamic>>.from(data['sales'] ?? const []);
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: loading
+            ? Center(
+                child: CircularProgressIndicator(color: AppColors.primaryLight),
+              )
+            : RefreshIndicator(
+                onRefresh: load,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(22),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.bar_chart_rounded, color: AppColors.primaryLight, size: 32),
-                              SizedBox(width: 10),
-                              Text('الإحصائيات والتقارير المالية',
-                                  style: TextStyle(color: Colors.white, fontSize: AppSizes.fontHuge, fontWeight: FontWeight.bold)),
-                            ],
+                          Icon(
+                            Icons.analytics_rounded,
+                            color: AppColors.primaryLight,
+                            size: 34,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'لوحة الإحصائيات والتقارير',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.refresh, color: AppColors.primaryLight),
-                            onPressed: _loadStats,
+                            onPressed: load,
+                            icon: Icon(
+                              Icons.refresh,
+                              color: AppColors.primaryLight,
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 24),
-
-                      // Grid of KPI Stat Cards
-                      GridView.count(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisCount: 3,
-                        crossAxisSpacing: 16,
-                        mainAxisSpacing: 16,
-                        childAspectRatio: 2.1,
-                        children: [
-                          _buildStatCard(
-                            title: 'عدد المبيعات الكلي',
-                            value: '${_stats['total_sales_count'] ?? 0} عملية',
-                            icon: Icons.receipt_long,
-                            color: AppColors.primaryLight,
-                            bgColor: const Color(0xFF0369A1).withOpacity(0.3),
-                          ),
-                          _buildStatCard(
-                            title: 'إجمالي الإيرادات (المبيعات)',
-                            value: '${_stats['total_revenue'] ?? 0} د.ع',
-                            icon: Icons.attach_money,
-                            color: AppColors.success,
-                            bgColor: AppColors.stockHighBg.withOpacity(0.3),
-                          ),
-                          _buildStatCard(
-                            title: 'أرباح المبيعات الإجمالية',
-                            value: '${_stats['gross_profit'] ?? 0} د.ع',
-                            icon: Icons.trending_up,
-                            color: AppColors.historyIcon,
-                            bgColor: const Color(0xFF065F46).withOpacity(0.3),
-                          ),
-                          _buildStatCard(
-                            title: 'إجمالي الصرفيات والمصاريف',
-                            value: '${_stats['total_expenses'] ?? 0} د.ع',
-                            icon: Icons.money_off,
-                            color: AppColors.danger,
-                            bgColor: AppColors.stockLowBg.withOpacity(0.3),
-                          ),
-                          _buildStatCard(
-                            title: 'صافي الأرباح النهائية (الربح - المصاريف)',
-                            value: '${_stats['final_net_profit'] ?? 0} د.ع',
-                            icon: Icons.account_balance,
-                            color: AppColors.warning,
-                            bgColor: const Color(0xFF78350F).withOpacity(0.3),
-                          ),
-                          _buildStatCard(
-                            title: 'إجمالي أصناف المنتجات',
-                            value: '${_stats['total_products'] ?? 0} منتج',
-                            icon: Icons.inventory_2,
-                            color: const Color(0xFFA855F7),
-                            bgColor: const Color(0xFF581C87).withOpacity(0.3),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 40),
-                      const Text('سجل المبيعات الأخير', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontHuge, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 16),
-                      if (_sales.isEmpty)
-                        const Center(child: Text('لا يوجد سجل مبيعات حتى الآن.', style: TextStyle(color: Colors.white54, fontSize: AppSizes.fontHeader)))
-                      else
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _sales.length,
-                          itemBuilder: (context, index) {
-                            final sale = _sales[index];
-                            return Card(
-                              color: AppColors.surface,
-                              margin: const EdgeInsets.only(bottom: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.white.withOpacity(0.05))),
-                              child: ListTile(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                                leading: Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(color: AppColors.historyIcon.withOpacity(0.2), shape: BoxShape.circle),
-                                  child: const Icon(Icons.receipt_long, color: AppColors.historyIcon),
-                                ),
-                                title: Text('طلب #${sale['id']} - ${sale['total_selling_amount']} د.ع', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
-                                subtitle: Text('${sale['created_at']}  |  الكاشير: ${sale['cashier_name']}', style: const TextStyle(color: Colors.white54, fontSize: AppSizes.fontMedium)),
-                                trailing: const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 16),
-                                onTap: () => _showSaleDetails(sale),
-                              ),
-                            );
-                          },
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(color: AppColors.border),
                         ),
+                        child: Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: [
+                            Text(
+                              'الفترة:',
+                              style: TextStyle(
+                                color: AppColors.textGray,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            ...periods.entries.map(
+                              (p) => ChoiceChip(
+                                label: Text(p.value),
+                                selected: period == p.key,
+                                selectedColor: AppColors.primaryLight,
+                                labelStyle: TextStyle(
+                                  color: period == p.key
+                                      ? Colors.white
+                                      : AppColors.textPrimary,
+                                ),
+                                onSelected: (_) {
+                                  setState(() {
+                                    period = p.key;
+                                    if (p.key != 'custom') {
+                                      start = null;
+                                      end = null;
+                                    }
+                                  });
+                                  if (p.key != 'custom') load();
+                                },
+                              ),
+                            ),
+                            if (period == 'custom')
+                              OutlinedButton.icon(
+                                onPressed: () => pick(true),
+                                icon: const Icon(Icons.date_range),
+                                label: Text(
+                                  start == null ? 'من تاريخ' : date(start!),
+                                ),
+                              ),
+                            if (period == 'custom')
+                              OutlinedButton.icon(
+                                onPressed: () => pick(false),
+                                icon: const Icon(Icons.event),
+                                label: Text(
+                                  end == null ? 'إلى تاريخ' : date(end!),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${data['start_date'] ?? ''}  —  ${data['end_date'] ?? ''}',
+                        style: TextStyle(color: AppColors.textGray),
+                      ),
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, c) {
+                          final cols = c.maxWidth > 1100
+                              ? 4
+                              : c.maxWidth > 700
+                              ? 2
+                              : 1;
+                          return GridView.count(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisCount: cols,
+                            childAspectRatio: c.maxWidth > 700 ? 2.5 : 3.5,
+                            crossAxisSpacing: 13,
+                            mainAxisSpacing: 13,
+                            children: [
+                              card(
+                                'صافي الإيرادات',
+                                money(stats['total_revenue']),
+                                Icons.payments,
+                                AppColors.success,
+                              ),
+                              card(
+                                'أرباح المبيعات',
+                                money(stats['gross_profit']),
+                                Icons.trending_up,
+                                AppColors.primaryLight,
+                              ),
+                              card(
+                                'صافي الربح بعد المصاريف',
+                                money(stats['final_net_profit']),
+                                Icons.account_balance,
+                                AppColors.warning,
+                              ),
+                              card(
+                                'عدد الطلبات',
+                                '${stats['total_sales_count'] ?? 0}',
+                                Icons.receipt_long,
+                                const Color(0xFFA855F7),
+                              ),
+                              card(
+                                'متوسط الطلب',
+                                money(stats['average_order_value']),
+                                Icons.shopping_basket,
+                                Colors.teal,
+                              ),
+                              card(
+                                'هامش الربح',
+                                '${stats['profit_margin_pct'] ?? 0}%',
+                                Icons.percent,
+                                Colors.orange,
+                              ),
+                              card(
+                                'إجمالي الخصومات',
+                                money(stats['total_discount']),
+                                Icons.discount,
+                                AppColors.danger,
+                              ),
+                              card(
+                                'الأصناف المباعة',
+                                '${stats['total_items_sold'] ?? 0}',
+                                Icons.inventory_2,
+                                Colors.indigo,
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, c) {
+                          final wide = c.maxWidth > 900;
+                          final a = section(
+                            'المبيعات عبر الزمن',
+                            timeline(),
+                            Icons.show_chart,
+                          );
+                          final b = section(
+                            'طرق الدفع',
+                            payments(),
+                            Icons.account_balance_wallet,
+                          );
+                          return wide
+                              ? Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(flex: 2, child: a),
+                                    const SizedBox(width: 15),
+                                    Expanded(child: b),
+                                  ],
+                                )
+                              : Column(
+                                  children: [a, const SizedBox(height: 15), b],
+                                );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, c) {
+                          final wide = c.maxWidth > 900;
+                          final a = section(
+                            'الأصناف الأكثر مبيعاً',
+                            topProducts(),
+                            Icons.star,
+                          );
+                          final b = section(
+                            'آخر العمليات',
+                            sales.isEmpty
+                                ? Text(
+                                    'لا توجد مبيعات ضمن الفترة',
+                                    style: TextStyle(color: AppColors.textGray),
+                                  )
+                                : Column(
+                                    children: sales
+                                        .take(8)
+                                        .map(
+                                          (s) => ListTile(
+                                            onTap: () => saleDetails(s),
+                                            contentPadding: EdgeInsets.zero,
+                                            leading: Icon(
+                                              Icons.receipt_long,
+                                              color: AppColors.historyIcon,
+                                            ),
+                                            title: Text(
+                                              'طلب #${s['id']} • ${money(s['total_selling_amount'])}',
+                                              style: TextStyle(
+                                                color: AppColors.textPrimary,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            subtitle: Text(
+                                              '${s['created_at']} • ${s['cashier_name']}',
+                                              style: TextStyle(
+                                                color: AppColors.textGray,
+                                              ),
+                                            ),
+                                            trailing: const Icon(
+                                              Icons.chevron_left,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
+                            Icons.receipt_long,
+                          );
+                          return wide
+                              ? Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(child: a),
+                                    const SizedBox(width: 15),
+                                    Expanded(child: b),
+                                  ],
+                                )
+                              : Column(
+                                  children: [a, const SizedBox(height: 15), b],
+                                );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'التقارير تعتمد على التوقيت المحلي وتُحدّث عند السحب للأسفل أو الضغط على تحديث.',
+                        style: TextStyle(
+                          color: AppColors.textGray,
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-        ),
+              ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    ThemeService.themeModeNotifier.removeListener(themeChanged);
+    super.dispose();
   }
 }

@@ -47,6 +47,12 @@ def create_app():
             except Exception:
                 db.session.rollback()
 
+            try:
+                db.session.execute(db.text('ALTER TABLE restock_history ADD COLUMN note VARCHAR(255) DEFAULT NULL'))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
             # Seed initial Developer account if users table is empty
             if User.query.count() == 0 : 
                 dev = User(
@@ -67,9 +73,30 @@ def create_app():
                 ]
                 for p in sample_products:
                     db.session.add(p)
+                    db.session.flush()
+                    db.session.add(RestockHistory(
+                        product_id=p.id,
+                        quantity=p.stock_quantity,
+                        purchase_price=p.purchase_price,
+                        note='أول عملية شراء (إضافة المنتج)',
+                        created_at=p.created_at or datetime.utcnow()
+                    ))
 
                 db.session.commit()
                 print("Seeded default developer user and sample products.")
+
+            # Ensure all existing products have an initial purchase record in RestockHistory
+            all_prods = Product.query.all()
+            for p in all_prods:
+                if RestockHistory.query.filter_by(product_id=p.id).count() == 0:
+                    db.session.add(RestockHistory(
+                        product_id=p.id,
+                        quantity=p.stock_quantity,
+                        purchase_price=p.purchase_price,
+                        note='أول عملية شراء (إضافة المنتج)',
+                        created_at=p.created_at or datetime.utcnow()
+                    ))
+            db.session.commit()
         except Exception as e:
             print(f"Database initialization warning: {e}")
 
@@ -276,14 +303,17 @@ def create_app():
         db.session.add(product)
         db.session.flush() # To get product.id
 
-        if product.stock_quantity > 0:
-            restock_log = RestockHistory(
-                product_id=product.id,
-                quantity=product.stock_quantity,
-                purchase_price=product.purchase_price
-            )
-            db.session.add(restock_log)
-            
+        # Always log initial purchase record (سجل أول عملية شراء للمنتج)
+        restock_log = RestockHistory(
+            product_id=product.id,
+            quantity=product.stock_quantity,
+            purchase_price=product.purchase_price,
+            note='أول عملية شراء (إضافة المنتج)',
+            created_at=product.created_at or datetime.utcnow()
+        )
+        db.session.add(restock_log)
+
+        if product.stock_quantity > 0 and product.purchase_price > 0:
             expense = Expense(
                 title=f'رصيد بضاعة أولي: {product.name}',
                 amount=product.stock_quantity * product.purchase_price,
@@ -331,6 +361,7 @@ def create_app():
         data = request.get_json() or {}
         added_qty = float(data.get('added_quantity', 0))
         new_purchase_price = data.get('purchase_price')
+        new_selling_price = data.get('selling_price')
 
         if added_qty <= 0:
             return jsonify({'status': 'error', 'message': 'يجب إدخال كمية موجبة للتوريد'}), 400
@@ -338,11 +369,14 @@ def create_app():
         product.stock_quantity += added_qty
         if new_purchase_price is not None:
             product.purchase_price = float(new_purchase_price)
+        if new_selling_price is not None:
+            product.selling_price = float(new_selling_price)
 
         restock_log = RestockHistory(
             product_id=product.id,
             quantity=added_qty,
-            purchase_price=product.purchase_price
+            purchase_price=product.purchase_price,
+            note='توريد شحنة إضافية'
         )
         db.session.add(restock_log)
         
@@ -371,7 +405,23 @@ def create_app():
 
     @app.route('/api/products/<int:product_id>/restock-history', methods=['GET'])
     def get_restock_history(product_id):
+        product = Product.query.get(product_id)
+        if not product:
+            return jsonify({'status': 'error', 'message': 'المنتج غير موجود'}), 404
+
         history = RestockHistory.query.filter_by(product_id=product_id).order_by(RestockHistory.id.desc()).all()
+        if not history:
+            initial_log = RestockHistory(
+                product_id=product.id,
+                quantity=product.stock_quantity,
+                purchase_price=product.purchase_price,
+                note='أول عملية شراء (إضافة المنتج)',
+                created_at=product.created_at or datetime.utcnow()
+            )
+            db.session.add(initial_log)
+            db.session.commit()
+            history = [initial_log]
+
         return jsonify({'status': 'success', 'history': [h.to_dict() for h in history]})
 
     @app.route('/api/products/barcode/<path:barcode>', methods=['GET'])
@@ -467,11 +517,122 @@ def create_app():
         db.session.commit()
 
         return jsonify({'status': 'success', 'message': 'تم إكمال عملية البيع بنجاح', 'sale': sale.to_dict()}), 201
+    def _filter_sales_and_expenses(args):
+        period = (args.get('period') or 'all').lower().strip()
+        start_date_str = args.get('start_date')
+        end_date_str = args.get('end_date')
+        try:
+            tz_offset_min = int(args.get('tz_offset', 180))
+        except (ValueError, TypeError):
+            tz_offset_min = 180
+        tz_delta = timedelta(minutes=tz_offset_min)
+
+        local_now = datetime.utcnow() + tz_delta
+        today_date = local_now.date()
+
+        utc_start = None
+        utc_end = None
+        display_start = 'البداية'
+        display_end = 'الآن'
+
+        if period == 'today':
+            local_start = datetime(today_date.year, today_date.month, today_date.day, 0, 0, 0)
+            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
+            utc_start = local_start - tz_delta
+            utc_end = local_end - tz_delta
+            display_start = local_start.strftime('%Y-%m-%d')
+            display_end = local_end.strftime('%Y-%m-%d')
+        elif period == 'yesterday':
+            y_date = today_date - timedelta(days=1)
+            local_start = datetime(y_date.year, y_date.month, y_date.day, 0, 0, 0)
+            local_end = datetime(y_date.year, y_date.month, y_date.day, 23, 59, 59, 999999)
+            utc_start = local_start - tz_delta
+            utc_end = local_end - tz_delta
+            display_start = local_start.strftime('%Y-%m-%d')
+            display_end = local_end.strftime('%Y-%m-%d')
+        elif period == 'week':
+            w_start_date = today_date - timedelta(days=6)
+            local_start = datetime(w_start_date.year, w_start_date.month, w_start_date.day, 0, 0, 0)
+            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
+            utc_start = local_start - tz_delta
+            utc_end = local_end - tz_delta
+            display_start = local_start.strftime('%Y-%m-%d')
+            display_end = local_end.strftime('%Y-%m-%d')
+        elif period == 'month':
+            local_start = datetime(today_date.year, today_date.month, 1, 0, 0, 0)
+            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
+            utc_start = local_start - tz_delta
+            utc_end = local_end - tz_delta
+            display_start = local_start.strftime('%Y-%m-%d')
+            display_end = local_end.strftime('%Y-%m-%d')
+        elif period == 'year':
+            local_start = datetime(today_date.year, 1, 1, 0, 0, 0)
+            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
+            utc_start = local_start - tz_delta
+            utc_end = local_end - tz_delta
+            display_start = local_start.strftime('%Y-%m-%d')
+            display_end = local_end.strftime('%Y-%m-%d')
+        elif period == 'custom':
+            try:
+                s_d = datetime.strptime(start_date_str, '%Y-%m-%d').date() if start_date_str else today_date
+                e_d = datetime.strptime(end_date_str, '%Y-%m-%d').date() if end_date_str else today_date
+                if s_d > e_d:
+                    s_d, e_d = e_d, s_d
+                local_start = datetime(s_d.year, s_d.month, s_d.day, 0, 0, 0)
+                local_end = datetime(e_d.year, e_d.month, e_d.day, 23, 59, 59, 999999)
+                utc_start = local_start - tz_delta
+                utc_end = local_end - tz_delta
+                display_start = local_start.strftime('%Y-%m-%d')
+                display_end = local_end.strftime('%Y-%m-%d')
+            except Exception:
+                pass
+        else:
+            period = 'all'
+
+        # Filter Sales
+        sales_q = Sale.query
+        if utc_start and utc_end:
+            sales_q = sales_q.filter(Sale.created_at >= utc_start, Sale.created_at <= utc_end)
+
+        payment_method = args.get('payment_method')
+        if payment_method and payment_method != 'all':
+            sales_q = sales_q.filter(Sale.payment_method == payment_method)
+
+        cashier = args.get('cashier')
+        if cashier and cashier != 'all':
+            sales_q = sales_q.filter(Sale.cashier_name == cashier)
+
+        search = (args.get('search') or '').strip()
+        if search:
+            sales_q = sales_q.filter(
+                db.or_(
+                    Sale.cashier_name.ilike(f'%{search}%'),
+                    Sale.payment_method.ilike(f'%{search}%'),
+                    db.cast(Sale.id, db.String).ilike(f'%{search}%')
+                )
+            )
+
+        all_sales = sales_q.order_by(Sale.id.desc()).all()
+
+        # Filter Expenses
+        exp_q = Expense.query
+        if utc_start and utc_end:
+            exp_q = exp_q.filter(Expense.created_at >= utc_start, Expense.created_at <= utc_end)
+        all_expenses = exp_q.order_by(Expense.id.desc()).all()
+
+        return period, display_start, display_end, all_sales, all_expenses, tz_delta
 
     @app.route('/api/sales', methods=['GET'])
     def get_sales():
-        sales = Sale.query.order_by(Sale.id.desc()).limit(100).all()
-        return jsonify({'status': 'success', 'sales': [s.to_dict() for s in sales]})
+        period, display_start, display_end, all_sales, all_expenses, tz_delta = _filter_sales_and_expenses(request.args)
+        sales_dicts = []
+        for s in all_sales:
+            d = s.to_dict()
+            if s.created_at:
+                d['created_at'] = (s.created_at + tz_delta).strftime('%Y-%m-%d %H:%M:%S')
+            sales_dicts.append(d)
+        return jsonify({'status': 'success', 'sales': sales_dicts, 'count': len(sales_dicts)})
+
 
     # ================= TABLES & ACTIVE ORDERS APIs =================
     
@@ -625,25 +786,129 @@ def create_app():
     # ================= ANALYTICS APIs =================
     @app.route('/api/stats', methods=['GET'])
     def get_stats():
-        total_sales_count = Sale.query.count()
-        total_revenue = db.session.query(db.func.sum(Sale.total_selling_amount - Sale.total_discount)).scalar() or 0.0
-        total_cost = db.session.query(db.func.sum(Sale.total_purchase_cost)).scalar() or 0.0
-        gross_profit = db.session.query(db.func.sum(Sale.net_profit)).scalar() or 0.0
-        total_expenses = db.session.query(db.func.sum(Expense.amount)).scalar() or 0.0
+        period, display_start, display_end, all_sales, all_expenses, tz_delta = _filter_sales_and_expenses(request.args)
+
+        total_sales_count = len(all_sales)
+        gross_sales = sum(s.total_selling_amount for s in all_sales)
+        total_discount = sum(s.total_discount for s in all_sales)
+        total_revenue = sum(s.total_selling_amount - s.total_discount for s in all_sales)
+        total_cost = sum(s.total_purchase_cost for s in all_sales)
+        gross_profit = sum(s.net_profit for s in all_sales)
+        total_expenses = sum(e.amount for e in all_expenses)
         final_net_profit = gross_profit - total_expenses
-        total_products = Product.query.count()
+        avg_order_value = (total_revenue / total_sales_count) if total_sales_count > 0 else 0.0
+        profit_margin = ((gross_profit / total_revenue) * 100) if total_revenue > 0 else 0.0
+
+        # Payment methods breakdown
+        pm_dict = {}
+        for s in all_sales:
+            pm = s.payment_method or 'نقداً'
+            if pm not in pm_dict:
+                pm_dict[pm] = {'amount': 0.0, 'count': 0}
+            pm_dict[pm]['amount'] += (s.total_selling_amount - s.total_discount)
+            pm_dict[pm]['count'] += 1
+
+        # Products ranking & total items sold
+        prod_map = {}
+        total_items_sold = 0.0
+        for s in all_sales:
+            for item in s.items:
+                pname = item.product_name
+                qty = item.quantity or 0.0
+                total_items_sold += qty
+                if pname not in prod_map:
+                    prod_map[pname] = {
+                        'product_name': pname,
+                        'quantity': 0.0,
+                        'total_revenue': 0.0,
+                        'total_profit': 0.0
+                    }
+                prod_map[pname]['quantity'] += qty
+                prod_map[pname]['total_revenue'] += (item.total_price or 0.0)
+                prod_map[pname]['total_profit'] += (item.profit or 0.0)
+
+        top_products = sorted(prod_map.values(), key=lambda x: x['quantity'], reverse=True)[:10]
+        for p in top_products:
+            p['quantity'] = round(p['quantity'], 2)
+            p['total_revenue'] = round(p['total_revenue'], 2)
+            p['total_profit'] = round(p['total_profit'], 2)
+
+        # Timeline grouping for chart
+        timeline_buckets = {}
+        if period in ['today', 'yesterday']:
+            for h in range(24):
+                lbl = f"{h:02d}:00"
+                timeline_buckets[lbl] = {'label': lbl, 'revenue': 0.0, 'profit': 0.0, 'orders': 0}
+            for s in all_sales:
+                if s.created_at:
+                    local_t = s.created_at + tz_delta
+                    lbl = f"{local_t.hour:02d}:00"
+                    if lbl in timeline_buckets:
+                        timeline_buckets[lbl]['revenue'] += (s.total_selling_amount - s.total_discount)
+                        timeline_buckets[lbl]['profit'] += s.net_profit
+                        timeline_buckets[lbl]['orders'] += 1
+        elif period in ['week', 'month', 'custom']:
+            for s in all_sales:
+                if s.created_at:
+                    local_t = s.created_at + tz_delta
+                    lbl = local_t.strftime('%Y-%m-%d')
+                    if lbl not in timeline_buckets:
+                        timeline_buckets[lbl] = {'label': lbl, 'revenue': 0.0, 'profit': 0.0, 'orders': 0}
+                    timeline_buckets[lbl]['revenue'] += (s.total_selling_amount - s.total_discount)
+                    timeline_buckets[lbl]['profit'] += s.net_profit
+                    timeline_buckets[lbl]['orders'] += 1
+        else: # year or all
+            for s in all_sales:
+                if s.created_at:
+                    local_t = s.created_at + tz_delta
+                    lbl = local_t.strftime('%Y-%m')
+                    if lbl not in timeline_buckets:
+                        timeline_buckets[lbl] = {'label': lbl, 'revenue': 0.0, 'profit': 0.0, 'orders': 0}
+                    timeline_buckets[lbl]['revenue'] += (s.total_selling_amount - s.total_discount)
+                    timeline_buckets[lbl]['profit'] += s.net_profit
+                    timeline_buckets[lbl]['orders'] += 1
+
+        timeline = list(timeline_buckets.values())
+        if period not in ['today', 'yesterday']:
+            timeline.sort(key=lambda x: x['label'])
+        for pt in timeline:
+            pt['revenue'] = round(pt['revenue'], 2)
+            pt['profit'] = round(pt['profit'], 2)
+
+        # Sales with local formatted date
+        sales_dicts = []
+        for s in all_sales:
+            d = s.to_dict()
+            if s.created_at:
+                d['created_at'] = (s.created_at + tz_delta).strftime('%Y-%m-%d %H:%M:%S')
+            d['items_count'] = len(s.items)
+            sales_dicts.append(d)
+
+        total_products_count = Product.query.count()
 
         return jsonify({
             'status': 'success',
+            'period': period,
+            'start_date': display_start,
+            'end_date': display_end,
             'stats': {
                 'total_sales_count': total_sales_count,
                 'total_revenue': round(total_revenue, 2),
+                'gross_sales': round(gross_sales, 2),
                 'total_cost': round(total_cost, 2),
+                'total_discount': round(total_discount, 2),
                 'gross_profit': round(gross_profit, 2),
                 'total_expenses': round(total_expenses, 2),
                 'final_net_profit': round(final_net_profit, 2),
-                'total_products': total_products
-            }
+                'average_order_value': round(avg_order_value, 2),
+                'profit_margin_pct': round(profit_margin, 1),
+                'total_items_sold': round(total_items_sold, 2),
+                'total_products': total_products_count
+            },
+            'payment_methods': {k: {'amount': round(v['amount'], 2), 'count': v['count']} for k, v in pm_dict.items()},
+            'top_products': top_products,
+            'timeline': timeline,
+            'sales': sales_dicts
         })
 
     # ================= DB SWITCHER API =================

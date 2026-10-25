@@ -1,8 +1,9 @@
 class RestockHistoryModel {
   final int id;
   final int productId;
-  final int quantity;
+  final double quantity;
   final double purchasePrice;
+  final String note;
   final String createdAt;
 
   RestockHistoryModel({
@@ -10,6 +11,7 @@ class RestockHistoryModel {
     required this.productId,
     required this.quantity,
     required this.purchasePrice,
+    required this.note,
     required this.createdAt,
   });
 
@@ -17,8 +19,13 @@ class RestockHistoryModel {
     return RestockHistoryModel(
       id: json['id'] ?? 0,
       productId: json['product_id'] ?? 0,
-      quantity: json['quantity'] ?? 0,
-      purchasePrice: (json['purchase_price'] ?? 0.0).toDouble(),
+      quantity: (json['quantity'] is num)
+          ? (json['quantity'] as num).toDouble()
+          : (double.tryParse(json['quantity']?.toString() ?? '0') ?? 0.0),
+      purchasePrice: (json['purchase_price'] is num)
+          ? (json['purchase_price'] as num).toDouble()
+          : (double.tryParse(json['purchase_price']?.toString() ?? '0') ?? 0.0),
+      note: json['note'] ?? '',
       createdAt: json['created_at'] ?? '',
     );
   }
