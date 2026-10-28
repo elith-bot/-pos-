@@ -248,7 +248,183 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget topProducts() {
+  void productDetails(
+    Map<String, dynamic> product,
+    List<Map<String, dynamic>> sales,
+  ) {
+    final name = '${product['product_name']}';
+    final quantity = (product['quantity'] as num?)?.toDouble() ?? 0;
+    final revenue = (product['total_revenue'] as num?)?.toDouble() ?? 0;
+    final profit = (product['total_profit'] as num?)?.toDouble() ?? 0;
+    final allRevenue =
+        List<Map<String, dynamic>>.from(
+          data['top_products'] ?? const [],
+        ).fold<double>(
+          0,
+          (sum, item) =>
+              sum + ((item['total_revenue'] as num?)?.toDouble() ?? 0),
+        );
+    final productSales = sales
+        .where(
+          (sale) => List<Map<String, dynamic>>.from(
+            sale['items'] ?? const [],
+          ).any((item) => '${item['product_name']}' == name),
+        )
+        .toList();
+    showDialog(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Row(
+            children: [
+              Icon(Icons.inventory_2, color: AppColors.primaryLight),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  name,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: 620,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _detailBox(
+                        'الكمية المباعة',
+                        '${quantity % 1 == 0 ? quantity.round() : quantity}',
+                        Icons.shopping_cart,
+                        AppColors.primaryLight,
+                      ),
+                      _detailBox(
+                        'إجمالي الإيراد',
+                        money(revenue),
+                        Icons.payments,
+                        AppColors.success,
+                      ),
+                      _detailBox(
+                        'إجمالي الربح',
+                        money(profit),
+                        Icons.trending_up,
+                        AppColors.warning,
+                      ),
+                      _detailBox(
+                        'عدد الطلبات',
+                        '${productSales.length}',
+                        Icons.receipt_long,
+                        const Color(0xFFA855F7),
+                      ),
+                      _detailBox(
+                        'متوسط سعر البيع',
+                        money(quantity == 0 ? 0 : revenue / quantity),
+                        Icons.sell,
+                        Colors.teal,
+                      ),
+                      _detailBox(
+                        'نسبة المبيعات',
+                        '${allRevenue == 0 ? 0 : (revenue / allRevenue * 100).toStringAsFixed(1)}%',
+                        Icons.percent,
+                        Colors.orange,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'الطلبات التي ظهر بها المنتج',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (productSales.isEmpty)
+                    Text(
+                      'لا توجد طلبات ضمن الفترة الحالية',
+                      style: TextStyle(color: AppColors.textGray),
+                    ),
+                  ...productSales
+                      .take(20)
+                      .map(
+                        (sale) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            Icons.receipt_long,
+                            color: AppColors.historyIcon,
+                          ),
+                          title: Text(
+                            'طلب #${sale['id']} • ${sale['created_at']}',
+                            style: TextStyle(color: AppColors.textPrimary),
+                          ),
+                          subtitle: Text(
+                            'الكاشير: ${sale['cashier_name']} • الدفع: ${sale['payment_method']}',
+                            style: TextStyle(color: AppColors.textGray),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.open_in_new),
+                            color: AppColors.primaryLight,
+                            onPressed: () {
+                              Navigator.pop(context);
+                              saleDetails(sale);
+                            },
+                          ),
+                        ),
+                      ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailBox(String title, String value, IconData icon, Color color) =>
+      Container(
+        width: 180,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(.10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: color.withOpacity(.25)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(color: AppColors.textGray, fontSize: 11),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    value,
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget topProducts(List<Map<String, dynamic>> sales) {
     final list = List<Map<String, dynamic>>.from(
       data['top_products'] ?? const [],
     );
@@ -261,6 +437,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       children: list.asMap().entries.map((e) {
         final p = e.value;
         return ListTile(
+          onTap: () => productDetails(p, sales),
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(
             backgroundColor: AppColors.primaryLight.withOpacity(.15),
@@ -277,15 +454,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ),
           ),
           subtitle: Text(
-            'الكمية: ${p['quantity'] ?? 0}',
+            'الكمية: ${p['quantity'] ?? 0} • اضغط لعرض التفاصيل الكاملة',
             style: TextStyle(color: AppColors.textGray),
           ),
-          trailing: Text(
-            money(p['total_revenue']),
-            style: TextStyle(
-              color: AppColors.success,
-              fontWeight: FontWeight.bold,
-            ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                money(p['total_revenue']),
+                style: TextStyle(
+                  color: AppColors.success,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_left, color: AppColors.primaryLight),
+            ],
           ),
         );
       }).toList(),
@@ -316,19 +500,63 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                   const Divider(),
                   ...items.map(
-                    (i) => ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        '${i['product_name']}',
-                        style: TextStyle(color: AppColors.textPrimary),
+                    (i) => Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.background,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.border),
                       ),
-                      subtitle: Text(
-                        'الكمية: ${i['quantity']}',
-                        style: TextStyle(color: AppColors.textGray),
-                      ),
-                      trailing: Text(
-                        money(i['total_price']),
-                        style: TextStyle(color: AppColors.primaryLight),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${i['product_name']}',
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 18,
+                            runSpacing: 7,
+                            children: [
+                              Text(
+                                'الكمية: ${i['quantity']}',
+                                style: TextStyle(color: AppColors.textGray),
+                              ),
+                              Text(
+                                'شراء: ${money(i['unit_purchase_price'])}',
+                                style: TextStyle(color: AppColors.textGray),
+                              ),
+                              Text(
+                                'بيع: ${money(i['unit_selling_price'])}',
+                                style: TextStyle(color: AppColors.primaryLight),
+                              ),
+                              Text(
+                                'الخصم: ${money(i['discount'])}',
+                                style: TextStyle(color: AppColors.warning),
+                              ),
+                              Text(
+                                'الإجمالي: ${money(i['total_price'])}',
+                                style: TextStyle(
+                                  color: AppColors.success,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'الربح: ${money(i['profit'])}',
+                                style: TextStyle(
+                                  color: AppColors.historyIcon,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -554,7 +782,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           final wide = c.maxWidth > 900;
                           final a = section(
                             'الأصناف الأكثر مبيعاً',
-                            topProducts(),
+                            topProducts(sales),
                             Icons.star,
                           );
                           final b = section(

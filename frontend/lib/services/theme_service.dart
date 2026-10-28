@@ -6,7 +6,7 @@ class ThemeService {
   static const String _storageKey = 'app_cashier_theme_mode';
   
   static final ValueNotifier<ThemeMode> themeModeNotifier =
-      ValueNotifier<ThemeMode>(ThemeMode.dark);
+      ValueNotifier<ThemeMode>(ThemeMode.light);
 
   static bool get isDark => themeModeNotifier.value == ThemeMode.dark;
 
@@ -14,13 +14,14 @@ class ThemeService {
     try {
       if (kIsWeb) {
         final saved = html.window.localStorage[_storageKey];
-        if (saved == 'light') {
-          themeModeNotifier.value = ThemeMode.light;
+        if (saved == 'dark') {
+          themeModeNotifier.value = ThemeMode.dark;
           return;
         }
       }
     } catch (_) {}
-    themeModeNotifier.value = ThemeMode.dark;
+    // الوضع الفاتح هو الافتراضي عند أول تشغيل، مع احترام اختيار المستخدم المحفوظ.
+    themeModeNotifier.value = ThemeMode.light;
   }
 
   static void toggleTheme() {

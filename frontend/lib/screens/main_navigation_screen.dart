@@ -20,11 +20,13 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final Set<int> _visitedTabs = {0};
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
+    _tabController.addListener(_onTabChanged);
     ThemeService.themeModeNotifier.addListener(_onThemeChanged);
   }
 
@@ -32,9 +34,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
     if (mounted) setState(() {});
   }
 
+  void _onTabChanged() {
+    if (_tabController.indexIsChanging) return;
+    final index = _tabController.index;
+    if (_visitedTabs.add(index) && mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
   }
@@ -132,11 +141,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> with Single
       body: TabBarView(
         controller: _tabController,
         children: [
-          PosScreen(),
-          ExpensesScreen(),
-          AnalyticsScreen(),
-          EmployeesScreen(),
-          SettingsScreen(),
+          _visitedTabs.contains(0) ? const PosScreen() : const SizedBox.shrink(),
+          _visitedTabs.contains(1) ? const ExpensesScreen() : const SizedBox.shrink(),
+          _visitedTabs.contains(2) ? const AnalyticsScreen() : const SizedBox.shrink(),
+          _visitedTabs.contains(3) ? const EmployeesScreen() : const SizedBox.shrink(),
+          _visitedTabs.contains(4) ? const SettingsScreen() : const SizedBox.shrink(),
         ],
       ),
     );

@@ -35,9 +35,11 @@ class _PosScreenState extends State<PosScreen> {
   set _globalDiscount(double val) => _globalDiscountNotifier.value = val;
 
   // Stores product card quantities (default 0 for each product)
-  final ValueNotifier<Map<int, double>> _cardQuantitiesNotifier = ValueNotifier({});
+  final ValueNotifier<Map<int, double>> _cardQuantitiesNotifier = ValueNotifier(
+    {},
+  );
   Map<int, double> get _cardQuantities => _cardQuantitiesNotifier.value;
-  
+
   // Tracks which cart items have expanded details
   final Set<int> _expandedCartItems = {};
 
@@ -56,11 +58,28 @@ class _PosScreenState extends State<PosScreen> {
     if (_activeTable == null) return;
     if (_saveDebounce?.isActive ?? false) _saveDebounce!.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 500), () {
-      ApiService.saveTableOrder(_activeTable!['id'], _cart);
+      if (_activeTable != null) {
+        ApiService.saveTableOrder(_activeTable!['id'], _cart);
+      }
     });
   }
 
-
+  Future<void> _returnToTables() async {
+    if (_activeTable != null) {
+      _saveDebounce?.cancel();
+      await ApiService.saveTableOrder(_activeTable!['id'], _cart);
+    }
+    if (!mounted) return;
+    setState(() {
+      _activeTable = null;
+      _cartNotifier.value = [];
+      _cardQuantitiesNotifier.value = {};
+      _globalDiscount = 0.0;
+      _customTotalSellingPrice = null;
+      _selectedTabIndex = 1;
+    });
+    await _loadTables();
+  }
 
   TextEditingController _getController(String key, String initialText) {
     if (!_controllers.containsKey(key)) {
@@ -82,6 +101,8 @@ class _PosScreenState extends State<PosScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _saveDebounce?.cancel();
     ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
     HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     for (var ctrl in _controllers.values) {
@@ -96,7 +117,8 @@ class _PosScreenState extends State<PosScreen> {
   bool _handleKeyEvent(KeyEvent event) {
     if (event is KeyDownEvent) {
       final now = DateTime.now();
-      if (_lastKeyPress != null && now.difference(_lastKeyPress!).inMilliseconds > 500) {
+      if (_lastKeyPress != null &&
+          now.difference(_lastKeyPress!).inMilliseconds > 500) {
         _barcodeBuffer = '';
       }
       _lastKeyPress = now;
@@ -126,7 +148,7 @@ class _PosScreenState extends State<PosScreen> {
       double currentQty = _cardQuantities[product.id] ?? 0.0;
       double increment = product.isWeight ? product.weightIncrementStep : 1.0;
       _updateProductQuantity(product, currentQty + increment);
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -163,7 +185,6 @@ class _PosScreenState extends State<PosScreen> {
     ThemeService.themeModeNotifier.addListener(_onThemeChanged);
   }
 
-  
   Future<void> _loadTables() async {
     setState(() => _isLoadingTables = true);
     final tables = await ApiService.getTables();
@@ -178,11 +199,11 @@ class _PosScreenState extends State<PosScreen> {
   Future<void> _openTable(Map<String, dynamic> table) async {
     setState(() => _isLoading = true);
     final orderData = await ApiService.getTableOrder(table['id']);
-    
+
     _cartNotifier.value = [];
     _cardQuantitiesNotifier.value = {};
     _globalDiscount = 0.0;
-    
+
     if (orderData != null && orderData['has_order'] == true) {
       final items = orderData['order']['items'] as List;
       for (var item in items) {
@@ -190,20 +211,38 @@ class _PosScreenState extends State<PosScreen> {
         try {
           product = _products.firstWhere((p) => p.id == item['product_id']);
         } catch (_) {
-          product = ProductModel(id: item['product_id'], name: item['product_name'], barcode: '', imageUrl: '', purchasePrice: 0, sellingPrice: (item['unit_price'] as num).toDouble(), unitProfit: 0.0, stockQuantity: 0, category: 'عام', isWeight: false, weightUnitGrams: 1000, weightIncrementStep: 100, createdAt: DateTime.now().toIso8601String());
+          product = ProductModel(
+            id: item['product_id'],
+            name: item['product_name'],
+            barcode: '',
+            imageUrl: '',
+            purchasePrice: 0,
+            sellingPrice: (item['unit_price'] as num).toDouble(),
+            unitProfit: 0.0,
+            stockQuantity: 0,
+            category: 'عام',
+            isWeight: false,
+            weightUnitGrams: 1000,
+            weightIncrementStep: 100,
+            createdAt: DateTime.now().toIso8601String(),
+          );
         }
-        
-        _cartNotifier.value = List.from(_cartNotifier.value)..add(CartItemModel(
-          product: product,
-          quantity: (item['quantity'] as num).toDouble(),
-          unitPurchasePrice: product.purchasePrice,
-          unitSellingPrice: (item['unit_price'] as num).toDouble(),
-          discount: 0.0,
-        ));
-        _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value)..[ product.id ] = (item['quantity'] as num).toDouble();
+
+        _cartNotifier.value = List.from(_cartNotifier.value)
+          ..add(
+            CartItemModel(
+              product: product,
+              quantity: (item['quantity'] as num).toDouble(),
+              unitPurchasePrice: product.purchasePrice,
+              unitSellingPrice: (item['unit_price'] as num).toDouble(),
+              discount: 0.0,
+            ),
+          );
+        _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value)
+          ..[product.id] = (item['quantity'] as num).toDouble();
       }
     }
-    
+
     setState(() {
       _activeTable = table;
       _selectedTabIndex = 0;
@@ -216,7 +255,12 @@ class _PosScreenState extends State<PosScreen> {
     final success = await ApiService.saveTableOrder(_activeTable!['id'], _cart);
     if (success) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ طلب الطاولة بنجاح'), backgroundColor: AppColors.success));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم حفظ طلب الطاولة بنجاح'),
+            backgroundColor: AppColors.success,
+          ),
+        );
         setState(() {
           _activeTable = null;
           _cartNotifier.value = [];
@@ -237,18 +281,33 @@ class _PosScreenState extends State<PosScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('إدارة الطاولات', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
+              Text(
+                'إدارة الطاولات',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: AppSizes.fontHeader,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primarySolid,
+                ),
                 icon: const Icon(Icons.add, color: Colors.white),
-                label: const Text('إضافة طاولات', style: TextStyle(color: Colors.white)),
+                label: const Text(
+                  'إضافة طاولات',
+                  style: TextStyle(color: Colors.white),
+                ),
                 onPressed: () {
                   final ctrl = TextEditingController(text: '1');
                   showDialog(
                     context: context,
                     builder: (ctx) => AlertDialog(
                       backgroundColor: AppColors.surface,
-                      title: Text('إضافة طاولات جديدة', style: TextStyle(color: AppColors.textPrimary)),
+                      title: Text(
+                        'إضافة طاولات جديدة',
+                        style: TextStyle(color: AppColors.textPrimary),
+                      ),
                       content: TextField(
                         controller: ctrl,
                         keyboardType: TextInputType.number,
@@ -261,7 +320,10 @@ class _PosScreenState extends State<PosScreen> {
                         ),
                       ),
                       actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('إلغاء'),
+                        ),
                         ElevatedButton(
                           onPressed: () async {
                             final c = int.tryParse(ctrl.text) ?? 1;
@@ -275,7 +337,7 @@ class _PosScreenState extends State<PosScreen> {
                     ),
                   );
                 },
-              )
+              ),
             ],
           ),
         ),
@@ -296,9 +358,19 @@ class _PosScreenState extends State<PosScreen> {
                 onTap: () => _openTable(table),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: isActive ? AppColors.success.withOpacity(0.9) : (ThemeService.isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
+                    color: isActive
+                        ? AppColors.success.withOpacity(0.9)
+                        : (ThemeService.isDark
+                              ? const Color(0xFF334155)
+                              : const Color(0xFFE2E8F0)),
                     borderRadius: BorderRadius.circular(16),
-                    boxShadow: [BoxShadow(color: AppColors.cardShadow, blurRadius: 4, offset: const Offset(0, 2))],
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.cardShadow,
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Stack(
                     children: [
@@ -306,15 +378,45 @@ class _PosScreenState extends State<PosScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.table_restaurant, size: 48, color: isActive ? Colors.white : AppColors.textGray),
+                            Icon(
+                              Icons.table_restaurant,
+                              size: 48,
+                              color: isActive
+                                  ? Colors.white
+                                  : AppColors.textGray,
+                            ),
                             const SizedBox(height: 8),
-                            Text(table['name'], style: TextStyle(color: isActive ? Colors.white : AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
+                            Text(
+                              table['name'],
+                              style: TextStyle(
+                                color: isActive
+                                    ? Colors.white
+                                    : AppColors.textPrimary,
+                                fontSize: AppSizes.fontHeader,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             const SizedBox(height: 4),
-                            Text(isActive ? 'مشغولة' : 'متاحة', style: TextStyle(color: isActive ? Colors.white70 : AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                            Text(
+                              isActive ? 'مشغولة' : 'متاحة',
+                              style: TextStyle(
+                                color: isActive
+                                    ? Colors.white70
+                                    : AppColors.textGray,
+                                fontSize: AppSizes.fontNormal,
+                              ),
+                            ),
                             if (isActive && table['total_price'] != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 8.0),
-                                child: Text('${table['total_price']} د.ع', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge)),
+                                child: Text(
+                                  '${table['total_price']} د.ع',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: AppSizes.fontLarge,
+                                  ),
+                                ),
                               ),
                           ],
                         ),
@@ -325,9 +427,19 @@ class _PosScreenState extends State<PosScreen> {
                           right: 4,
                           left: 4,
                           child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.2), elevation: 0),
-                            icon: const Icon(Icons.payment, color: Colors.white, size: 16),
-                            label: const Text('دفع السعر', style: TextStyle(color: Colors.white)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white.withOpacity(0.2),
+                              elevation: 0,
+                            ),
+                            icon: const Icon(
+                              Icons.payment,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                            label: const Text(
+                              'دفع السعر',
+                              style: TextStyle(color: Colors.white),
+                            ),
                             onPressed: () => _openTable(table),
                           ),
                         ),
@@ -335,17 +447,25 @@ class _PosScreenState extends State<PosScreen> {
                         top: 4,
                         right: 4,
                         child: IconButton(
-                          icon: const Icon(Icons.delete, color: AppColors.danger),
+                          icon: const Icon(
+                            Icons.delete,
+                            color: AppColors.danger,
+                          ),
                           onPressed: () async {
                             if (isActive) {
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا يمكن حذف طاولة مشغولة'), backgroundColor: AppColors.danger));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('لا يمكن حذف طاولة مشغولة'),
+                                  backgroundColor: AppColors.danger,
+                                ),
+                              );
                               return;
                             }
                             await ApiService.deleteTable(table['id']);
                             _loadTables();
                           },
                         ),
-                      )
+                      ),
                     ],
                   ),
                 ),
@@ -378,38 +498,50 @@ class _PosScreenState extends State<PosScreen> {
     if (newQty < 0) newQty = 0.0;
 
     // No setState needed, Notifiers will handle it
-      _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value)..[ product.id ] = newQty;
-      final existingIndex = _cart.indexWhere((item) => item.product.id == product.id);
+    _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value)
+      ..[product.id] = newQty;
+    final existingIndex = _cart.indexWhere(
+      (item) => item.product.id == product.id,
+    );
 
-      if (newQty > 0) {
-        if (existingIndex >= 0) {
-          final newCart = List<CartItemModel>.from(_cartNotifier.value);
-          newCart[existingIndex].quantity = newQty;
-          _cartNotifier.value = newCart;
-        } else {
-          _cartNotifier.value = List.from(_cartNotifier.value)..add(CartItemModel(
-            product: product,
-            quantity: newQty,
-            unitPurchasePrice: product.purchasePrice,
-            unitSellingPrice: product.sellingPrice,
-            discount: 0.0,
-          ));
-        }
+    if (newQty > 0) {
+      if (existingIndex >= 0) {
+        final newCart = List<CartItemModel>.from(_cartNotifier.value);
+        newCart[existingIndex].quantity = newQty;
+        _cartNotifier.value = newCart;
       } else {
-        if (existingIndex >= 0) {
-          _cartNotifier.value = List.from(_cartNotifier.value)..removeAt(existingIndex);
-        }
+        _cartNotifier.value = List.from(_cartNotifier.value)
+          ..add(
+            CartItemModel(
+              product: product,
+              quantity: newQty,
+              unitPurchasePrice: product.purchasePrice,
+              unitSellingPrice: product.sellingPrice,
+              discount: 0.0,
+            ),
+          );
       }
+    } else {
+      if (existingIndex >= 0) {
+        _cartNotifier.value = List.from(_cartNotifier.value)
+          ..removeAt(existingIndex);
+      }
+    }
 
-      if (_cart.isEmpty) {
-        _globalDiscount = 0.0;
-      }
+    if (_cart.isEmpty) {
+      _globalDiscount = 0.0;
+    }
+
+    // حفظ محتويات الطاولة تلقائياً بعد أي تغيير في الكمية.
+    if (_activeTable != null) _debouncedSaveTableOrder();
 
     // Update card controller text if needed
     final key = 'card_qty_${product.id}';
     if (_controllers.containsKey(key)) {
       final ctrl = _controllers[key]!;
-      String textVal = newQty == newQty.toInt() ? newQty.toInt().toString() : newQty.toString();
+      String textVal = newQty == newQty.toInt()
+          ? newQty.toInt().toString()
+          : newQty.toString();
       if (ctrl.text != textVal) {
         ctrl.text = textVal;
       }
@@ -419,18 +551,28 @@ class _PosScreenState extends State<PosScreen> {
   // Method to adjust overall cart total discount directly at the sale level
   void _updateCartTotalDiscount(double newTotalDiscount) {
     if (_cart.isEmpty) return;
-    final double itemDiscountSum = _cart.fold(0.0, (sum, i) => sum + i.totalDiscountAmount);
+    final double itemDiscountSum = _cart.fold(
+      0.0,
+      (sum, i) => sum + i.totalDiscountAmount,
+    );
     _globalDiscount = newTotalDiscount - itemDiscountSum;
   }
 
   // Method to adjust overall cart final price directly
   void _updateCartFinalTotal(double newFinalTotal) {
     if (_cart.isEmpty) return;
-    final double baseSellingSum = _cart.fold(0.0, (sum, i) => sum + i.totalSellingAmount);
+    final double baseSellingSum = _cart.fold(
+      0.0,
+      (sum, i) => sum + i.totalSellingAmount,
+    );
     final double totalSellingSum = _customTotalSellingPrice ?? baseSellingSum;
-    final double itemDiscountSum = _cart.fold(0.0, (sum, i) => sum + i.totalDiscountAmount);
-    
-    double targetGlobalDiscount = totalSellingSum - itemDiscountSum - newFinalTotal;
+    final double itemDiscountSum = _cart.fold(
+      0.0,
+      (sum, i) => sum + i.totalDiscountAmount,
+    );
+
+    double targetGlobalDiscount =
+        totalSellingSum - itemDiscountSum - newFinalTotal;
     _globalDiscount = targetGlobalDiscount;
   }
 
@@ -452,12 +594,21 @@ class _PosScreenState extends State<PosScreen> {
         builder: (context, setDialogState) {
           return AlertDialog(
             backgroundColor: AppColors.surface,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: Row(
               children: [
                 Icon(Icons.add_business, color: AppColors.primaryLight),
                 SizedBox(width: 8),
-                Text('إضافة منتج جديد للمخزن', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
+                Text(
+                  'إضافة منتج جديد للمخزن',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: AppSizes.fontXLarge,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
             content: SingleChildScrollView(
@@ -472,7 +623,9 @@ class _PosScreenState extends State<PosScreen> {
                       labelStyle: TextStyle(color: AppColors.textGray),
                       filled: true,
                       fillColor: AppColors.background,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -488,7 +641,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -496,13 +651,28 @@ class _PosScreenState extends State<PosScreen> {
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.border,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 14,
+                          ),
                         ),
-                        icon: Icon(Icons.qr_code, color: AppColors.primaryLight, size: 18),
-                        label: const Text('توليد', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
+                        icon: Icon(
+                          Icons.qr_code,
+                          color: AppColors.primaryLight,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'توليد',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: AppSizes.fontSmall,
+                          ),
+                        ),
                         onPressed: () {
                           setDialogState(() {
-                            barcodeCtrl.text = DateTime.now().millisecondsSinceEpoch.toString();
+                            barcodeCtrl.text = DateTime.now()
+                                .millisecondsSinceEpoch
+                                .toString();
                           });
                         },
                       ),
@@ -520,11 +690,16 @@ class _PosScreenState extends State<PosScreen> {
                           decoration: InputDecoration(
                             labelText: 'رابط الصورة أو مسارها',
                             hintText: 'https://... أو اختر من الجهاز',
-                            hintStyle: TextStyle(color: AppColors.textHint, fontSize: AppSizes.fontSmall),
+                            hintStyle: TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: AppSizes.fontSmall,
+                            ),
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -532,12 +707,26 @@ class _PosScreenState extends State<PosScreen> {
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.border,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 14,
+                          ),
                         ),
-                        icon: Icon(Icons.folder_open, color: AppColors.primaryLight, size: 18),
-                        label: const Text('تصفح الجهاز', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
+                        icon: Icon(
+                          Icons.folder_open,
+                          color: AppColors.primaryLight,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'تصفح الجهاز',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: AppSizes.fontSmall,
+                          ),
+                        ),
                         onPressed: () async {
-                          final base64Image = await FilePickerHelper.pickImageAsBase64();
+                          final base64Image =
+                              await FilePickerHelper.pickImageAsBase64();
                           if (base64Image != null && base64Image.isNotEmpty) {
                             setDialogState(() {
                               imageCtrl.text = base64Image;
@@ -561,7 +750,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -576,7 +767,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -596,7 +789,9 @@ class _PosScreenState extends State<PosScreen> {
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
@@ -611,7 +806,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -622,7 +819,10 @@ class _PosScreenState extends State<PosScreen> {
                     children: [
                       Expanded(
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: AppColors.background,
                             borderRadius: BorderRadius.circular(10),
@@ -631,7 +831,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('يباع بالوزن؟', style: TextStyle(color: AppColors.textPrimary)),
+                              Text(
+                                'يباع بالوزن؟',
+                                style: TextStyle(color: AppColors.textPrimary),
+                              ),
                               Switch(
                                 value: isWeight,
                                 activeColor: AppColors.primaryLight,
@@ -657,7 +860,9 @@ class _PosScreenState extends State<PosScreen> {
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
@@ -672,11 +877,13 @@ class _PosScreenState extends State<PosScreen> {
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
-                      ]
+                      ],
                     ],
                   ),
                 ],
@@ -685,10 +892,15 @@ class _PosScreenState extends State<PosScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
+                child: Text(
+                  'إلغاء',
+                  style: TextStyle(color: AppColors.textGray),
+                ),
               ),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primarySolid,
+                ),
                 onPressed: () async {
                   if (nameCtrl.text.trim().isEmpty) return;
                   Navigator.pop(ctx);
@@ -701,12 +913,17 @@ class _PosScreenState extends State<PosScreen> {
                     'stock_quantity': double.tryParse(stockCtrl.text) ?? 0,
                     'category': categoryCtrl.text.trim(),
                     'is_weight': isWeight,
-                    'weight_unit_grams': int.tryParse(weightUnitCtrl.text) ?? 1000,
-                    'weight_increment_step': double.tryParse(weightIncCtrl.text) ?? 100.0,
+                    'weight_unit_grams':
+                        int.tryParse(weightUnitCtrl.text) ?? 1000,
+                    'weight_increment_step':
+                        double.tryParse(weightIncCtrl.text) ?? 100.0,
                   });
                   _loadProducts();
                 },
-                child: const Text('إضافة المنتج', style: TextStyle(color: Colors.white)),
+                child: const Text(
+                  'إضافة المنتج',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ],
           );
@@ -719,13 +936,21 @@ class _PosScreenState extends State<PosScreen> {
     final nameCtrl = TextEditingController(text: product.name);
     final barcodeCtrl = TextEditingController(text: product.barcode);
     final imageCtrl = TextEditingController(text: product.imageUrl);
-    final purchaseCtrl = TextEditingController(text: product.purchasePrice.toStringAsFixed(0));
-    final sellingCtrl = TextEditingController(text: product.sellingPrice.toStringAsFixed(0));
+    final purchaseCtrl = TextEditingController(
+      text: product.purchasePrice.toStringAsFixed(0),
+    );
+    final sellingCtrl = TextEditingController(
+      text: product.sellingPrice.toStringAsFixed(0),
+    );
     final stockCtrl = TextEditingController(text: '${product.stockQuantity}');
     final categoryCtrl = TextEditingController(text: product.category);
     bool isWeight = product.isWeight;
-    final weightUnitCtrl = TextEditingController(text: '${product.weightUnitGrams}');
-    final weightIncCtrl = TextEditingController(text: '${product.weightIncrementStep}');
+    final weightUnitCtrl = TextEditingController(
+      text: '${product.weightUnitGrams}',
+    );
+    final weightIncCtrl = TextEditingController(
+      text: '${product.weightIncrementStep}',
+    );
 
     showDialog(
       context: context,
@@ -733,12 +958,21 @@ class _PosScreenState extends State<PosScreen> {
         builder: (context, setDialogState) {
           return AlertDialog(
             backgroundColor: AppColors.surface,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             title: Row(
               children: [
                 Icon(Icons.edit, color: AppColors.primaryLight),
                 const SizedBox(width: 8),
-                Text('تعديل بيانات المنتج: ${product.name}', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
+                Text(
+                  'تعديل بيانات المنتج: ${product.name}',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: AppSizes.fontXLarge,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
             content: SingleChildScrollView(
@@ -753,7 +987,9 @@ class _PosScreenState extends State<PosScreen> {
                       labelStyle: TextStyle(color: AppColors.textGray),
                       filled: true,
                       fillColor: AppColors.background,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -769,7 +1005,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -777,13 +1015,28 @@ class _PosScreenState extends State<PosScreen> {
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.border,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 14,
+                          ),
                         ),
-                        icon: Icon(Icons.qr_code, color: AppColors.primaryLight, size: 18),
-                        label: const Text('توليد', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
+                        icon: Icon(
+                          Icons.qr_code,
+                          color: AppColors.primaryLight,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'توليد',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: AppSizes.fontSmall,
+                          ),
+                        ),
                         onPressed: () {
                           setDialogState(() {
-                            barcodeCtrl.text = DateTime.now().millisecondsSinceEpoch.toString();
+                            barcodeCtrl.text = DateTime.now()
+                                .millisecondsSinceEpoch
+                                .toString();
                           });
                         },
                       ),
@@ -802,7 +1055,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -810,12 +1065,26 @@ class _PosScreenState extends State<PosScreen> {
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.border,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 14,
+                          ),
                         ),
-                        icon: Icon(Icons.folder_open, color: AppColors.primaryLight, size: 18),
-                        label: const Text('تصفح الجهاز', style: TextStyle(color: Colors.white, fontSize: AppSizes.fontSmall)),
+                        icon: Icon(
+                          Icons.folder_open,
+                          color: AppColors.primaryLight,
+                          size: 18,
+                        ),
+                        label: const Text(
+                          'تصفح الجهاز',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: AppSizes.fontSmall,
+                          ),
+                        ),
                         onPressed: () async {
-                          final base64Image = await FilePickerHelper.pickImageAsBase64();
+                          final base64Image =
+                              await FilePickerHelper.pickImageAsBase64();
                           if (base64Image != null && base64Image.isNotEmpty) {
                             setDialogState(() {
                               imageCtrl.text = base64Image;
@@ -839,7 +1108,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -854,7 +1125,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -874,7 +1147,9 @@ class _PosScreenState extends State<PosScreen> {
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
@@ -889,7 +1164,9 @@ class _PosScreenState extends State<PosScreen> {
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
                           ),
                         ),
                       ),
@@ -900,7 +1177,10 @@ class _PosScreenState extends State<PosScreen> {
                     children: [
                       Expanded(
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: AppColors.background,
                             borderRadius: BorderRadius.circular(10),
@@ -909,7 +1189,10 @@ class _PosScreenState extends State<PosScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('يباع بالوزن؟', style: TextStyle(color: AppColors.textPrimary)),
+                              Text(
+                                'يباع بالوزن؟',
+                                style: TextStyle(color: AppColors.textPrimary),
+                              ),
                               Switch(
                                 value: isWeight,
                                 activeColor: AppColors.primaryLight,
@@ -935,7 +1218,9 @@ class _PosScreenState extends State<PosScreen> {
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
@@ -950,11 +1235,13 @@ class _PosScreenState extends State<PosScreen> {
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),
-                      ]
+                      ],
                     ],
                   ),
                 ],
@@ -963,10 +1250,15 @@ class _PosScreenState extends State<PosScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text('إلغاء', style: TextStyle(color: AppColors.textGray)),
+                child: Text(
+                  'إلغاء',
+                  style: TextStyle(color: AppColors.textGray),
+                ),
               ),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primarySolid,
+                ),
                 onPressed: () async {
                   if (nameCtrl.text.trim().isEmpty) return;
                   Navigator.pop(ctx);
@@ -979,12 +1271,17 @@ class _PosScreenState extends State<PosScreen> {
                     'stock_quantity': double.tryParse(stockCtrl.text) ?? 0,
                     'category': categoryCtrl.text.trim(),
                     'is_weight': isWeight,
-                    'weight_unit_grams': int.tryParse(weightUnitCtrl.text) ?? 1000,
-                    'weight_increment_step': double.tryParse(weightIncCtrl.text) ?? 100.0,
+                    'weight_unit_grams':
+                        int.tryParse(weightUnitCtrl.text) ?? 1000,
+                    'weight_increment_step':
+                        double.tryParse(weightIncCtrl.text) ?? 100.0,
                   });
                   _loadProducts();
                 },
-                child: const Text('حفظ التعديلات', style: TextStyle(color: Colors.white)),
+                child: const Text(
+                  'حفظ التعديلات',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ],
           );
@@ -995,8 +1292,12 @@ class _PosScreenState extends State<PosScreen> {
 
   void _showRestockDialog(ProductModel product) {
     final qtyCtrl = TextEditingController(text: '10');
-    final purchasePriceCtrl = TextEditingController(text: product.purchasePrice.toStringAsFixed(0));
-    final sellingPriceCtrl = TextEditingController(text: product.sellingPrice.toStringAsFixed(0));
+    final purchasePriceCtrl = TextEditingController(
+      text: product.purchasePrice.toStringAsFixed(0),
+    );
+    final sellingPriceCtrl = TextEditingController(
+      text: product.sellingPrice.toStringAsFixed(0),
+    );
 
     showDialog(
       context: context,
@@ -1011,13 +1312,21 @@ class _PosScreenState extends State<PosScreen> {
                 color: AppColors.primaryLight.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(Icons.add_business_outlined, color: AppColors.primaryLight, size: 22),
+              child: Icon(
+                Icons.add_business_outlined,
+                color: AppColors.primaryLight,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 'توريد وشراء شحنة إضافية: ${product.name}',
-                style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: AppSizes.fontHeader,
+                  fontWeight: FontWeight.bold,
+                ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1030,47 +1339,79 @@ class _PosScreenState extends State<PosScreen> {
             children: [
               TextField(
                 controller: qtyCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 style: TextStyle(color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   labelText: 'الكمية المضافة للمخزن',
                   labelStyle: TextStyle(color: AppColors.textGray),
-                  prefixIcon: Icon(Icons.inventory_2_outlined, color: AppColors.primaryLight, size: 20),
+                  prefixIcon: Icon(
+                    Icons.inventory_2_outlined,
+                    color: AppColors.primaryLight,
+                    size: 20,
+                  ),
                   filled: true,
                   fillColor: AppColors.background,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: purchasePriceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 style: TextStyle(color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   labelText: 'سعر الشراء للشحنة (تكلفة القطعة)',
                   labelStyle: TextStyle(color: AppColors.textGray),
-                  prefixIcon: const Icon(Icons.shopping_cart_checkout, color: AppColors.warning, size: 20),
-                  helperText: 'سعر الشراء الحالي: ${product.purchasePrice.toStringAsFixed(0)} د.ع',
-                  helperStyle: TextStyle(color: AppColors.textGray, fontSize: 11),
+                  prefixIcon: const Icon(
+                    Icons.shopping_cart_checkout,
+                    color: AppColors.warning,
+                    size: 20,
+                  ),
+                  helperText:
+                      'سعر الشراء الحالي: ${product.purchasePrice.toStringAsFixed(0)} د.ع',
+                  helperStyle: TextStyle(
+                    color: AppColors.textGray,
+                    fontSize: 11,
+                  ),
                   filled: true,
                   fillColor: AppColors.background,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: sellingPriceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 style: TextStyle(color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   labelText: 'سعر البيع للزبون (تحديث السعر)',
                   labelStyle: TextStyle(color: AppColors.textGray),
-                  prefixIcon: const Icon(Icons.sell_outlined, color: AppColors.success, size: 20),
-                  helperText: 'سعر البيع الحالي: ${product.sellingPrice.toStringAsFixed(0)} د.ع (يمكن تعديله)',
-                  helperStyle: TextStyle(color: AppColors.primaryLight, fontSize: 11),
+                  prefixIcon: const Icon(
+                    Icons.sell_outlined,
+                    color: AppColors.success,
+                    size: 20,
+                  ),
+                  helperText:
+                      'سعر البيع الحالي: ${product.sellingPrice.toStringAsFixed(0)} د.ع (يمكن تعديله)',
+                  helperStyle: TextStyle(
+                    color: AppColors.primaryLight,
+                    fontSize: 11,
+                  ),
                   filled: true,
                   fillColor: AppColors.background,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ],
@@ -1084,13 +1425,19 @@ class _PosScreenState extends State<PosScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.success,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             onPressed: () async {
               final qty = double.tryParse(qtyCtrl.text) ?? 0;
-              final pPrice = double.tryParse(purchasePriceCtrl.text) ?? product.purchasePrice;
-              final sPrice = double.tryParse(sellingPriceCtrl.text) ?? product.sellingPrice;
+              final pPrice =
+                  double.tryParse(purchasePriceCtrl.text) ??
+                  product.purchasePrice;
+              final sPrice =
+                  double.tryParse(sellingPriceCtrl.text) ??
+                  product.sellingPrice;
               if (qty > 0) {
                 Navigator.pop(ctx);
                 await ApiService.restockProduct(
@@ -1102,7 +1449,13 @@ class _PosScreenState extends State<PosScreen> {
                 _loadProducts();
               }
             },
-            child: const Text('تأكيد التوريد والأسعار', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text(
+              'تأكيد التوريد والأسعار',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -1126,13 +1479,21 @@ class _PosScreenState extends State<PosScreen> {
                 color: AppColors.primaryLight.withOpacity(0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(Icons.history, color: AppColors.primaryLight, size: 22),
+              child: Icon(
+                Icons.history,
+                color: AppColors.primaryLight,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 'سجل مشتريات: ${product.name}',
-                style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: AppSizes.fontHeader,
+                  fontWeight: FontWeight.bold,
+                ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1142,14 +1503,24 @@ class _PosScreenState extends State<PosScreen> {
           width: 500,
           height: 380,
           child: history.isEmpty
-              ? Center(child: Text('لا توجد سجلات شراء سابقة', style: TextStyle(color: AppColors.textGray)))
+              ? Center(
+                  child: Text(
+                    'لا توجد سجلات شراء سابقة',
+                    style: TextStyle(color: AppColors.textGray),
+                  ),
+                )
               : ListView.builder(
                   itemCount: history.length,
                   itemBuilder: (context, index) {
                     final h = history[index];
-                    final isInitial = h.note.contains('أول') || index == history.length - 1;
-                    final qtyStr = (h.quantity % 1 == 0) ? h.quantity.toInt().toString() : h.quantity.toString();
-                    final labelText = isInitial ? 'أول عملية شراء (إضافة المنتج)' : (h.note.isNotEmpty ? h.note : 'توريد شحنة إضافية');
+                    final isInitial =
+                        h.note.contains('أول') || index == history.length - 1;
+                    final qtyStr = (h.quantity % 1 == 0)
+                        ? h.quantity.toInt().toString()
+                        : h.quantity.toString();
+                    final labelText = isInitial
+                        ? 'أول عملية شراء (إضافة المنتج)'
+                        : (h.note.isNotEmpty ? h.note : 'توريد شحنة إضافية');
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
@@ -1158,7 +1529,9 @@ class _PosScreenState extends State<PosScreen> {
                         color: AppColors.background,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: isInitial ? AppColors.success.withOpacity(0.4) : AppColors.border,
+                          color: isInitial
+                              ? AppColors.success.withOpacity(0.4)
+                              : AppColors.border,
                           width: 1,
                         ),
                       ),
@@ -1169,24 +1542,37 @@ class _PosScreenState extends State<PosScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
                                 decoration: BoxDecoration(
-                                  color: isInitial ? AppColors.stockHighBg : AppColors.primaryLight.withOpacity(0.15),
+                                  color: isInitial
+                                      ? AppColors.stockHighBg
+                                      : AppColors.primaryLight.withOpacity(
+                                          0.15,
+                                        ),
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Icon(
-                                      isInitial ? Icons.star : Icons.inventory_2_outlined,
+                                      isInitial
+                                          ? Icons.star
+                                          : Icons.inventory_2_outlined,
                                       size: 13,
-                                      color: isInitial ? AppColors.stockHighText : AppColors.primaryLight,
+                                      color: isInitial
+                                          ? AppColors.stockHighText
+                                          : AppColors.primaryLight,
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
                                       labelText,
                                       style: TextStyle(
-                                        color: isInitial ? AppColors.stockHighText : AppColors.primaryLight,
+                                        color: isInitial
+                                            ? AppColors.stockHighText
+                                            : AppColors.primaryLight,
                                         fontSize: 12,
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -1210,21 +1596,36 @@ class _PosScreenState extends State<PosScreen> {
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.shopping_bag_outlined, size: 15, color: AppColors.textGray),
+                                  Icon(
+                                    Icons.shopping_bag_outlined,
+                                    size: 15,
+                                    color: AppColors.textGray,
+                                  ),
                                   const SizedBox(width: 4),
                                   Text(
                                     'الكمية: $qtyStr',
-                                    style: TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
+                                    style: TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ],
                               ),
                               Row(
                                 children: [
-                                  Icon(Icons.access_time, size: 14, color: AppColors.textGray),
+                                  Icon(
+                                    Icons.access_time,
+                                    size: 14,
+                                    color: AppColors.textGray,
+                                  ),
                                   const SizedBox(width: 4),
                                   Text(
                                     h.createdAt,
-                                    style: TextStyle(color: AppColors.textGray, fontSize: 12),
+                                    style: TextStyle(
+                                      color: AppColors.textGray,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -1237,7 +1638,10 @@ class _PosScreenState extends State<PosScreen> {
                 ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text('إغلاق', style: TextStyle(color: AppColors.textGray))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('إغلاق', style: TextStyle(color: AppColors.textGray)),
+          ),
         ],
       ),
     );
@@ -1248,10 +1652,19 @@ class _PosScreenState extends State<PosScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: Text('تأكيد حذف المنتج', style: TextStyle(color: AppColors.textPrimary)),
-        content: Text('هل أنت متأكد من حذف ${product.name}؟', style: TextStyle(color: AppColors.textDialog)),
+        title: Text(
+          'تأكيد حذف المنتج',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: Text(
+          'هل أنت متأكد من حذف ${product.name}؟',
+          style: TextStyle(color: AppColors.textDialog),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () async {
@@ -1268,7 +1681,12 @@ class _PosScreenState extends State<PosScreen> {
 
   Future<void> _completeCheckout() async {
     if (_cart.isEmpty) return;
-    final success = await ApiService.checkoutSale(_cart, 'نقداً', _globalDiscount, tableId: _activeTable?['id']);
+    final success = await ApiService.checkoutSale(
+      _cart,
+      'نقداً',
+      _globalDiscount,
+      tableId: _activeTable?['id'],
+    );
     if (success) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1283,7 +1701,6 @@ class _PosScreenState extends State<PosScreen> {
           _controllers.clear();
           _globalDiscount = 0.0;
           _activeTable = null;
-
         });
         _loadProducts();
       }
@@ -1296,9 +1713,15 @@ class _PosScreenState extends State<PosScreen> {
         try {
           final base64Data = imageUrl.split(',').last;
           final bytes = base64Decode(base64Data);
-          return Image.memory(bytes, height: 140, width: double.infinity, fit: BoxFit.cover);
+          return Image.memory(
+            bytes,
+            height: 140,
+            width: double.infinity,
+            fit: BoxFit.cover,
+          );
         } catch (_) {}
-      } else if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      } else if (imageUrl.startsWith('http://') ||
+          imageUrl.startsWith('https://')) {
         return Image.network(
           imageUrl,
           height: 140,
@@ -1317,503 +1740,972 @@ class _PosScreenState extends State<PosScreen> {
       width: double.infinity,
       color: AppColors.background,
       child: Center(
-        child: Icon(Icons.shopping_bag_outlined, size: 54, color: AppColors.primaryLight.withOpacity(0.7)),
+        child: Icon(
+          Icons.shopping_bag_outlined,
+          size: 54,
+          color: AppColors.primaryLight.withOpacity(0.7),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final double totalCostSum = _cart.fold(0.0, (sum, i) => sum + i.totalPurchaseCost);
-    final double totalSellingSum = _cart.fold(0.0, (sum, i) => sum + i.totalSellingAmount);
-    final double itemDiscountSum = _cart.fold(0.0, (sum, i) => sum + i.totalDiscountAmount);
-    
+    final double totalCostSum = _cart.fold(
+      0.0,
+      (sum, i) => sum + i.totalPurchaseCost,
+    );
+    final double totalSellingSum = _cart.fold(
+      0.0,
+      (sum, i) => sum + i.totalSellingAmount,
+    );
+    final double itemDiscountSum = _cart.fold(
+      0.0,
+      (sum, i) => sum + i.totalDiscountAmount,
+    );
+
     final double totalDiscountSum = itemDiscountSum + _globalDiscount;
     final double totalFinalAmount = totalSellingSum - totalDiscountSum;
     final double totalNetProfitSum = totalFinalAmount - totalCostSum;
 
-    
     Widget buildProductsArea() {
       return Expanded(
-              flex: 75,
-              child: Column(
+        flex: 75,
+        child: Column(
+          children: [
+            // Tabs
+            Container(
+              color: AppColors.background,
+              child: Row(
                 children: [
-                  // Tabs
-                  Container(
-                    color: AppColors.background,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: InkWell(
-                            onTap: () {
-                              if (_activeTable != null) {
-                                _activeTable = null;
-                                _cartNotifier.value = [];
-                                _cardQuantitiesNotifier.value = {};
-                                _globalDiscount = 0.0;
-                              }
-                              setState(() => _selectedTabIndex = 0);
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              decoration: BoxDecoration(
-                                color: _selectedTabIndex == 0 ? AppColors.surface : AppColors.background,
-                                border: Border(bottom: BorderSide(color: _selectedTabIndex == 0 ? AppColors.primaryLight : Colors.transparent, width: 3)),
-                              ),
-                              child: Center(child: Text('البيع المباشر' + (_activeTable != null ? ' (إلغاء طلب الطاولة)' : ''), style: TextStyle(color: _selectedTabIndex == 0 ? AppColors.primaryLight : AppColors.textGray, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold))),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: InkWell(
-                            onTap: () {
-                              setState(() => _selectedTabIndex = 1);
-                              _loadTables();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              decoration: BoxDecoration(
-                                color: _selectedTabIndex == 1 ? AppColors.surface : AppColors.background,
-                                border: Border(bottom: BorderSide(color: _selectedTabIndex == 1 ? AppColors.primaryLight : Colors.transparent, width: 3)),
-                              ),
-                              child: Center(child: Text('الطاولات', style: TextStyle(color: _selectedTabIndex == 1 ? AppColors.primaryLight : AppColors.textGray, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold))),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_selectedTabIndex == 1)
-                    Expanded(child: _isLoadingTables ? const Center(child: CircularProgressIndicator()) : _buildTablesGrid())
-                  else
-                    Expanded(child: Column(children: [
-                      if (_activeTable != null)
-                        Container(
-                          color: AppColors.success.withOpacity(0.2),
-                          padding: const EdgeInsets.all(8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.table_restaurant, color: AppColors.success),
-                              const SizedBox(width: 8),
-                              Text('طلب نشط: ${_activeTable!['name']}', style: const TextStyle(color: AppColors.success, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        ),
-                  // Top Toolbar (Search, Add Product)
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    color: AppColors.surface,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            style: TextStyle(color: AppColors.textPrimary),
-                            onChanged: (val) {
-                              if (_searchDebounce?.isActive ?? false) _searchDebounce!.cancel();
-                              _searchDebounce = Timer(const Duration(milliseconds: 400), () {
-                                setState(() {
-                                  _searchQuery = val;
-                                });
-                                _loadProducts();
-                              });
-                            },
-                            decoration: InputDecoration(
-                              hintText: 'بحث فوري في المنتجات (الاسم، التصنيف)...',
-                              hintStyle: TextStyle(color: AppColors.textHint),
-                              prefixIcon: Icon(Icons.search, color: AppColors.primaryLight),
-                              filled: true,
-                              fillColor: AppColors.background,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(width: 12),
-                        if (appPermissions.canManageProducts)
-                          ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primarySolid,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                            icon: const Icon(Icons.add_circle_outline, color: Colors.white),
-                            label: const Text('إضافة منتج', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                            onPressed: _showAddProductDialog,
-                          ),
-                      ],
-                    ),
-                  ),
-
-                  // Products Grid (4 items per row on desktop)
                   Expanded(
-                    child: _isLoading
-                        ? Center(child: CircularProgressIndicator(color: AppColors.primaryLight))
-                        : _products.isEmpty
-                            ? Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.inventory_2_outlined, size: 64, color: AppColors.textGray.withOpacity(0.3)),
-                                    const SizedBox(height: 12),
-                                    Text('لا توجد منتجات مطابقة حالياً', style: TextStyle(color: AppColors.textGray)),
-                                  ],
+                    child: InkWell(
+                      onTap: () {
+                        if (_activeTable != null) {
+                          _activeTable = null;
+                          _cartNotifier.value = [];
+                          _cardQuantitiesNotifier.value = {};
+                          _globalDiscount = 0.0;
+                        }
+                        setState(() => _selectedTabIndex = 0);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          color: _selectedTabIndex == 0
+                              ? AppColors.surface
+                              : AppColors.background,
+                          border: Border(
+                            bottom: BorderSide(
+                              color: _selectedTabIndex == 0
+                                  ? AppColors.primaryLight
+                                  : Colors.transparent,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'البيع المباشر' +
+                                (_activeTable != null
+                                    ? ' (إلغاء طلب الطاولة)'
+                                    : ''),
+                            style: TextStyle(
+                              color: _selectedTabIndex == 0
+                                  ? AppColors.primaryLight
+                                  : AppColors.textGray,
+                              fontSize: AppSizes.fontHeader,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        if (_activeTable != null) {
+                          _returnToTables();
+                        } else {
+                          setState(() => _selectedTabIndex = 1);
+                          _loadTables();
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          color: _selectedTabIndex == 1
+                              ? AppColors.surface
+                              : AppColors.background,
+                          border: Border(
+                            bottom: BorderSide(
+                              color: _selectedTabIndex == 1
+                                  ? AppColors.primaryLight
+                                  : Colors.transparent,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'الطاولات',
+                            style: TextStyle(
+                              color: _selectedTabIndex == 1
+                                  ? AppColors.primaryLight
+                                  : AppColors.textGray,
+                              fontSize: AppSizes.fontHeader,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_selectedTabIndex == 1)
+              Expanded(
+                child: _isLoadingTables
+                    ? const Center(child: CircularProgressIndicator())
+                    : _buildTablesGrid(),
+              )
+            else
+              Expanded(
+                child: Column(
+                  children: [
+                    if (_activeTable != null)
+                      Container(
+                        color: AppColors.success.withOpacity(0.2),
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.table_restaurant,
+                              color: AppColors.success,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'طلب نشط: ${_activeTable!['name']}',
+                              style: const TextStyle(
+                                color: AppColors.success,
+                                fontSize: AppSizes.fontHeader,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            TextButton.icon(
+                              onPressed: _returnToTables,
+                              icon: const Icon(Icons.arrow_back, size: 18),
+                              label: const Text('رجوع للطاولات'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppColors.success,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    // Top Toolbar (Search, Add Product)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      color: AppColors.surface,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              style: TextStyle(color: AppColors.textPrimary),
+                              onChanged: (val) {
+                                if (_searchDebounce?.isActive ?? false)
+                                  _searchDebounce!.cancel();
+                                _searchDebounce = Timer(
+                                  const Duration(milliseconds: 400),
+                                  () {
+                                    setState(() {
+                                      _searchQuery = val;
+                                    });
+                                    _loadProducts();
+                                  },
+                                );
+                              },
+                              decoration: InputDecoration(
+                                hintText:
+                                    'بحث فوري في المنتجات (الاسم، التصنيف)...',
+                                hintStyle: TextStyle(color: AppColors.textHint),
+                                prefixIcon: Icon(
+                                  Icons.search,
+                                  color: AppColors.primaryLight,
                                 ),
-                              )
-                            : GridView.builder(
-                                padding: const EdgeInsets.all(16),
-                                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                                  maxCrossAxisExtent: 310,
-                                  mainAxisExtent: 430,
-                                  crossAxisSpacing: 16,
-                                  mainAxisSpacing: 16,
+                                filled: true,
+                                fillColor: AppColors.background,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
                                 ),
-                                itemCount: _products.length,
-                                itemBuilder: (context, index) {
-                                    final product = _products[index];
-                                    return ValueListenableBuilder<Map<int, double>>(
-                                      valueListenable: _cardQuantitiesNotifier,
-                                      builder: (context, cardQuantities, child) {
-                                        final cardQty = cardQuantities[product.id] ?? 0;
-                                        final String fQty = _formatQty(cardQty);
-                                        final cardCtrl = _getController('card_qty_${product.id}', fQty);
-                                        if (double.tryParse(cardCtrl.text) != cardQty && cardCtrl.text != fQty) {
-                                          cardCtrl.text = fQty;
-                                        }
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ),
 
-                                        return GestureDetector(
-                                          onTap: () {
-                                            if (cardQty == 0) {
-                                              _updateProductQuantity(product, product.isWeight ? product.weightIncrementStep : 1.0);
-                                            }
-                                          },
-                                          child: Container(
-                                    decoration: BoxDecoration(
-                                      color: AppColors.surface,
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: cardQty > 0 ? AppColors.primarySolid : AppColors.border,
-                                        width: cardQty > 0 ? 2 : 1,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: AppColors.cardShadow,
-                                          blurRadius: 6,
-                                          offset: const Offset(0, 3),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        // Product Image & Stock Badge
-                                        Stack(
-                                          children: [
-                                            ClipRRect(
-                                              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                                              child: _buildProductImage(product.imageUrl),
+                          const SizedBox(width: 12),
+                          if (appPermissions.canManageProducts)
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primarySolid,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 14,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.add_circle_outline,
+                                color: Colors.white,
+                              ),
+                              label: const Text(
+                                'إضافة منتج',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              onPressed: _showAddProductDialog,
+                            ),
+                        ],
+                      ),
+                    ),
+
+                    // Products Grid (4 items per row on desktop)
+                    Expanded(
+                      child: _isLoading
+                          ? Center(
+                              child: CircularProgressIndicator(
+                                color: AppColors.primaryLight,
+                              ),
+                            )
+                          : _products.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.inventory_2_outlined,
+                                    size: 64,
+                                    color: AppColors.textGray.withOpacity(0.3),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'لا توجد منتجات مطابقة حالياً',
+                                    style: TextStyle(color: AppColors.textGray),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : GridView.builder(
+                              padding: const EdgeInsets.all(16),
+                              gridDelegate:
+                                  const SliverGridDelegateWithMaxCrossAxisExtent(
+                                    maxCrossAxisExtent: 310,
+                                    mainAxisExtent: 430,
+                                    crossAxisSpacing: 16,
+                                    mainAxisSpacing: 16,
+                                  ),
+                              itemCount: _products.length,
+                              itemBuilder: (context, index) {
+                                final product = _products[index];
+                                return ValueListenableBuilder<Map<int, double>>(
+                                  valueListenable: _cardQuantitiesNotifier,
+                                  builder: (context, cardQuantities, child) {
+                                    final cardQty =
+                                        cardQuantities[product.id] ?? 0;
+                                    final String fQty = _formatQty(cardQty);
+                                    final cardCtrl = _getController(
+                                      'card_qty_${product.id}',
+                                      fQty,
+                                    );
+                                    if (double.tryParse(cardCtrl.text) !=
+                                            cardQty &&
+                                        cardCtrl.text != fQty) {
+                                      cardCtrl.text = fQty;
+                                    }
+
+                                    return GestureDetector(
+                                      onTap: () {
+                                        if (cardQty == 0) {
+                                          _updateProductQuantity(
+                                            product,
+                                            product.isWeight
+                                                ? product.weightIncrementStep
+                                                : 1.0,
+                                          );
+                                        }
+                                      },
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: AppColors.surface,
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                          border: Border.all(
+                                            color: cardQty > 0
+                                                ? AppColors.primarySolid
+                                                : AppColors.border,
+                                            width: cardQty > 0 ? 2 : 1,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: AppColors.cardShadow,
+                                              blurRadius: 6,
+                                              offset: const Offset(0, 3),
                                             ),
-                                            Positioned(
-                                              top: 8,
-                                              right: 8,
-                                              child: Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                                decoration: BoxDecoration(
-                                                  color: product.stockQuantity > 5
-                                                      ? AppColors.stockHighBg
-                                                      : AppColors.stockLowBg,
-                                                  borderRadius: BorderRadius.circular(12),
-                                                ),
-                                                child: Text(
-                                                  'المخزن: ${product.stockQuantity}',
-                                                  style: TextStyle(
-                                                    color: product.stockQuantity > 5
-                                                        ? AppColors.stockHighText
-                                                        : AppColors.stockLowText,
-                                                    fontSize: AppSizes.fontSmall,
-                                                    fontWeight: FontWeight.bold,
+                                          ],
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            // Product Image & Stock Badge
+                                            Stack(
+                                              children: [
+                                                ClipRRect(
+                                                  borderRadius:
+                                                      const BorderRadius.vertical(
+                                                        top: Radius.circular(
+                                                          16,
+                                                        ),
+                                                      ),
+                                                  child: _buildProductImage(
+                                                    product.imageUrl,
                                                   ),
+                                                ),
+                                                Positioned(
+                                                  top: 8,
+                                                  right: 8,
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 8,
+                                                          vertical: 4,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color:
+                                                          product.stockQuantity >
+                                                              5
+                                                          ? AppColors
+                                                                .stockHighBg
+                                                          : AppColors
+                                                                .stockLowBg,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            12,
+                                                          ),
+                                                    ),
+                                                    child: Text(
+                                                      'المخزن: ${product.stockQuantity}',
+                                                      style: TextStyle(
+                                                        color:
+                                                            product.stockQuantity >
+                                                                5
+                                                            ? AppColors
+                                                                  .stockHighText
+                                                            : AppColors
+                                                                  .stockLowText,
+                                                        fontSize:
+                                                            AppSizes.fontSmall,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+
+                                            // Card Info Body
+                                            Expanded(
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 10.0,
+                                                      vertical: 8.0,
+                                                    ),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    Text(
+                                                      product.name,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        color: AppColors
+                                                            .textPrimary,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize:
+                                                            AppSizes.fontTitle,
+                                                      ),
+                                                    ),
+                                                    Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      children: [
+                                                        if (appPermissions
+                                                            .canViewPurchasePrice)
+                                                          Text(
+                                                            'شراء: ${product.purchasePrice.toStringAsFixed(0)}',
+                                                            style: TextStyle(
+                                                              color: AppColors
+                                                                  .textGray,
+                                                              fontSize: AppSizes
+                                                                  .fontNormal,
+                                                            ),
+                                                          )
+                                                        else
+                                                          Text(
+                                                            'شراء: ***',
+                                                            style: TextStyle(
+                                                              color: AppColors
+                                                                  .textGray,
+                                                              fontSize: AppSizes
+                                                                  .fontNormal,
+                                                            ),
+                                                          ),
+
+                                                        if (appPermissions
+                                                            .canViewSellingPrice)
+                                                          Text(
+                                                            'بيع: ${product.sellingPrice.toStringAsFixed(0)}',
+                                                            style: TextStyle(
+                                                              color: AppColors
+                                                                  .primaryLight,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                              fontSize: AppSizes
+                                                                  .fontMedium,
+                                                            ),
+                                                          ),
+
+                                                        if (appPermissions
+                                                            .canViewProfit)
+                                                          Text(
+                                                            'ربح: ${product.unitProfit.toStringAsFixed(0)}',
+                                                            style: const TextStyle(
+                                                              color: AppColors
+                                                                  .success,
+                                                              fontSize: AppSizes
+                                                                  .fontNormal,
+                                                            ),
+                                                          )
+                                                        else
+                                                          const Text(
+                                                            'ربح: ***',
+                                                            style: TextStyle(
+                                                              color: AppColors
+                                                                  .success,
+                                                              fontSize: AppSizes
+                                                                  .fontNormal,
+                                                            ),
+                                                          ),
+                                                      ],
+                                                    ),
+                                                    // Live Quantity Box (Preserves Focus while Typing)
+                                                    Row(
+                                                      children: [
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.remove_circle,
+                                                            color: AppColors
+                                                                .danger,
+                                                            size: 24,
+                                                          ),
+                                                          onPressed: () =>
+                                                              _updateProductQuantity(
+                                                                product,
+                                                                cardQty -
+                                                                    (product.isWeight
+                                                                        ? product
+                                                                              .weightIncrementStep
+                                                                        : 1.0),
+                                                              ),
+                                                        ),
+                                                        Expanded(
+                                                          child: SizedBox(
+                                                            height: 36,
+                                                            child: TextField(
+                                                              controller:
+                                                                  cardCtrl,
+                                                              keyboardType:
+                                                                  TextInputType
+                                                                      .number,
+                                                              textAlign:
+                                                                  TextAlign
+                                                                      .center,
+                                                              style: TextStyle(
+                                                                color: AppColors
+                                                                    .textPrimary,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                                fontSize: AppSizes
+                                                                    .fontLarge,
+                                                              ),
+                                                              decoration: InputDecoration(
+                                                                filled: true,
+                                                                fillColor: AppColors
+                                                                    .background,
+                                                                contentPadding:
+                                                                    const EdgeInsets.symmetric(
+                                                                      vertical:
+                                                                          4,
+                                                                    ),
+                                                                border: OutlineInputBorder(
+                                                                  borderRadius:
+                                                                      BorderRadius.circular(
+                                                                        8,
+                                                                      ),
+                                                                  borderSide:
+                                                                      BorderSide
+                                                                          .none,
+                                                                ),
+                                                              ),
+                                                              onChanged: (val) {
+                                                                final q =
+                                                                    double.tryParse(
+                                                                      val,
+                                                                    ) ??
+                                                                    0.0;
+                                                                _updateProductQuantity(
+                                                                  product,
+                                                                  q,
+                                                                );
+                                                              },
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.add_circle,
+                                                            color: AppColors
+                                                                .success,
+                                                            size: 24,
+                                                          ),
+                                                          onPressed: () =>
+                                                              _updateProductQuantity(
+                                                                product,
+                                                                cardQty +
+                                                                    (product.isWeight
+                                                                        ? product
+                                                                              .weightIncrementStep
+                                                                        : 1.0),
+                                                              ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    // Card Actions: Edit, Restock, Delete
+                                                    if (appPermissions
+                                                        .canManageProducts)
+                                                      Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        children: [
+                                                          TextButton.icon(
+                                                            style:
+                                                                TextButton.styleFrom(
+                                                                  padding:
+                                                                      EdgeInsets
+                                                                          .zero,
+                                                                  minimumSize:
+                                                                      const Size(
+                                                                        40,
+                                                                        30,
+                                                                      ),
+                                                                ),
+                                                            icon: Icon(
+                                                              Icons.edit,
+                                                              color: AppColors
+                                                                  .primaryLight,
+                                                              size: 14,
+                                                            ),
+                                                            label: Text(
+                                                              'تعديل',
+                                                              style: TextStyle(
+                                                                color: AppColors
+                                                                    .primaryLight,
+                                                                fontSize: AppSizes
+                                                                    .fontSmall,
+                                                              ),
+                                                            ),
+                                                            onPressed: () =>
+                                                                _showEditProductDialog(
+                                                                  product,
+                                                                ),
+                                                          ),
+                                                          TextButton.icon(
+                                                            style:
+                                                                TextButton.styleFrom(
+                                                                  padding:
+                                                                      EdgeInsets
+                                                                          .zero,
+                                                                  minimumSize:
+                                                                      const Size(
+                                                                        40,
+                                                                        30,
+                                                                      ),
+                                                                ),
+                                                            icon: const Icon(
+                                                              Icons.inventory,
+                                                              color: AppColors
+                                                                  .warning,
+                                                              size: 14,
+                                                            ),
+                                                            label: const Text(
+                                                              'توريد',
+                                                              style: TextStyle(
+                                                                color: AppColors
+                                                                    .warning,
+                                                                fontSize: AppSizes
+                                                                    .fontSmall,
+                                                              ),
+                                                            ),
+                                                            onPressed: () =>
+                                                                _showRestockDialog(
+                                                                  product,
+                                                                ),
+                                                          ),
+                                                          TextButton.icon(
+                                                            style:
+                                                                TextButton.styleFrom(
+                                                                  padding:
+                                                                      EdgeInsets
+                                                                          .zero,
+                                                                  minimumSize:
+                                                                      const Size(
+                                                                        40,
+                                                                        30,
+                                                                      ),
+                                                                ),
+                                                            icon: Icon(
+                                                              Icons.history,
+                                                              color: AppColors
+                                                                  .historyIcon,
+                                                              size: 14,
+                                                            ),
+                                                            label: Text(
+                                                              'السجل',
+                                                              style: TextStyle(
+                                                                color: AppColors
+                                                                    .historyIcon,
+                                                                fontSize: AppSizes
+                                                                    .fontSmall,
+                                                              ),
+                                                            ),
+                                                            onPressed: () =>
+                                                                _showRestockHistoryDialog(
+                                                                  product,
+                                                                ),
+                                                          ),
+                                                          TextButton.icon(
+                                                            style:
+                                                                TextButton.styleFrom(
+                                                                  padding:
+                                                                      EdgeInsets
+                                                                          .zero,
+                                                                  minimumSize:
+                                                                      const Size(
+                                                                        40,
+                                                                        30,
+                                                                      ),
+                                                                ),
+                                                            icon: const Icon(
+                                                              Icons.delete,
+                                                              color: AppColors
+                                                                  .danger,
+                                                              size: 14,
+                                                            ),
+                                                            label: const Text(
+                                                              'حذف',
+                                                              style: TextStyle(
+                                                                color: AppColors
+                                                                    .danger,
+                                                                fontSize: AppSizes
+                                                                    .fontSmall,
+                                                              ),
+                                                            ),
+                                                            onPressed: () =>
+                                                                _confirmDeleteProduct(
+                                                                  product,
+                                                                ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    SizedBox(
+                                                      width: double.infinity,
+                                                      child: ElevatedButton.icon(
+                                                        style: ElevatedButton.styleFrom(
+                                                          backgroundColor:
+                                                              AppColors
+                                                                  .primarySolid,
+                                                          padding:
+                                                              const EdgeInsets.symmetric(
+                                                                vertical: 12,
+                                                              ),
+                                                          shape: RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius.circular(
+                                                                  8,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                        icon: const Icon(
+                                                          Icons
+                                                              .add_shopping_cart,
+                                                          color: Colors.white,
+                                                          size: 20,
+                                                        ),
+                                                        label: const Text(
+                                                          'إضافة للسلة',
+                                                          style: TextStyle(
+                                                            color: Colors.white,
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                            fontSize: AppSizes
+                                                                .fontLarge,
+                                                          ),
+                                                        ),
+                                                        onPressed: () =>
+                                                            _updateProductQuantity(
+                                                              product,
+                                                              cardQty +
+                                                                  (product.isWeight
+                                                                      ? product
+                                                                            .weightIncrementStep
+                                                                      : 1.0),
+                                                            ),
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
                                               ),
                                             ),
                                           ],
                                         ),
-
-                                        // Card Info Body
-                                        Expanded(
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 8.0),
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                              children: [
-                                                Text(
-                                                  product.name,
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                      color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontTitle),
-                                                ),
-                                                Row(
-                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                  children: [
-                                                    if (appPermissions.canViewPurchasePrice)
-                                                      Text('شراء: ${product.purchasePrice.toStringAsFixed(0)}',
-                                                          style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal))
-                                                    else
-                                                      Text('شراء: ***', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
-                                                    
-                                                    if (appPermissions.canViewSellingPrice)
-                                                      Text('بيع: ${product.sellingPrice.toStringAsFixed(0)}',
-                                                          style: TextStyle(
-                                                              color: AppColors.primaryLight,
-                                                              fontWeight: FontWeight.bold,
-                                                              fontSize: AppSizes.fontMedium)),
-                                                    
-                                                    if (appPermissions.canViewProfit)
-                                                      Text('ربح: ${product.unitProfit.toStringAsFixed(0)}',
-                                                          style: const TextStyle(color: AppColors.success, fontSize: AppSizes.fontNormal))
-                                                    else
-                                                      const Text('ربح: ***', style: TextStyle(color: AppColors.success, fontSize: AppSizes.fontNormal)),
-                                                  ],
-                                                ),
-                                                // Live Quantity Box (Preserves Focus while Typing)
-                                                Row(
-                                                  children: [
-                                                    IconButton(
-                                                      icon: const Icon(Icons.remove_circle, color: AppColors.danger, size: 24),
-                                                      onPressed: () => _updateProductQuantity(product, cardQty - (product.isWeight ? product.weightIncrementStep : 1.0)),
-                                                    ),
-                                                    Expanded(
-                                                      child: SizedBox(
-                                                        height: 36,
-                                                        child: TextField(
-                                                          controller: cardCtrl,
-                                                          keyboardType: TextInputType.number,
-                                                          textAlign: TextAlign.center,
-                                                          style: TextStyle(
-                                                              color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
-                                                          decoration: InputDecoration(
-                                                            filled: true,
-                                                            fillColor: AppColors.background,
-                                                            contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                                                            border: OutlineInputBorder(
-                                                              borderRadius: BorderRadius.circular(8),
-                                                              borderSide: BorderSide.none,
-                                                            ),
-                                                          ),
-                                                          onChanged: (val) {
-                                                            final q = double.tryParse(val) ?? 0.0;
-                                                            _updateProductQuantity(product, q);
-                                                          },
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    IconButton(
-                                                      icon: const Icon(Icons.add_circle, color: AppColors.success, size: 24),
-                                                      onPressed: () => _updateProductQuantity(product, cardQty + (product.isWeight ? product.weightIncrementStep : 1.0)),
-                                                    ),
-                                                  ],
-                                                ),
-                                                // Card Actions: Edit, Restock, Delete
-                                                if (appPermissions.canManageProducts)
-                                                  Row(
-                                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                    children: [
-                                                      TextButton.icon(
-                                                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 30)),
-                                                        icon: Icon(Icons.edit, color: AppColors.primaryLight, size: 14),
-                                                        label: Text('تعديل', style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontSmall)),
-                                                        onPressed: () => _showEditProductDialog(product),
-                                                      ),
-                                                      TextButton.icon(
-                                                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 30)),
-                                                        icon: const Icon(Icons.inventory, color: AppColors.warning, size: 14),
-                                                        label: const Text('توريد', style: TextStyle(color: AppColors.warning, fontSize: AppSizes.fontSmall)),
-                                                        onPressed: () => _showRestockDialog(product),
-                                                      ),
-                                                      TextButton.icon(
-                                                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 30)),
-                                                        icon: Icon(Icons.history, color: AppColors.historyIcon, size: 14),
-                                                        label: Text('السجل', style: TextStyle(color: AppColors.historyIcon, fontSize: AppSizes.fontSmall)),
-                                                        onPressed: () => _showRestockHistoryDialog(product),
-                                                      ),
-                                                      TextButton.icon(
-                                                        style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 30)),
-                                                        icon: const Icon(Icons.delete, color: AppColors.danger, size: 14),
-                                                        label: const Text('حذف', style: TextStyle(color: AppColors.danger, fontSize: AppSizes.fontSmall)),
-                                                        onPressed: () => _confirmDeleteProduct(product),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                SizedBox(
-                                                  width: double.infinity,
-                                                  child: ElevatedButton.icon(
-                                                    style: ElevatedButton.styleFrom(
-                                                      backgroundColor: AppColors.primarySolid,
-                                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                                    ),
-                                                    icon: const Icon(Icons.add_shopping_cart, color: Colors.white, size: 20),
-                                                    label: const Text('إضافة للسلة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge)),
-                                                    onPressed: () => _updateProductQuantity(product, cardQty + (product.isWeight ? product.weightIncrementStep : 1.0)),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ));
-                                      },
+                                      ),
                                     );
                                   },
-                                ),
-                  ),
-                    ])),
-                ],
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
               ),
-            );
+          ],
+        ),
+      );
     }
 
     Widget buildCartArea() {
       return ValueListenableBuilder<List<CartItemModel>>(
-      valueListenable: _cartNotifier,
-      builder: (context, _cart, child) {
-        final double totalCostSum = _cart.fold(0.0, (sum, i) => sum + i.totalPurchaseCost);
-        final double totalSellingSum = _cart.fold(0.0, (sum, i) => sum + i.totalSellingAmount);
-        final double itemDiscountSum = _cart.fold(0.0, (sum, i) => sum + i.totalDiscountAmount);
-        final double totalDiscountSum = itemDiscountSum + _globalDiscount;
-        final double totalFinalAmount = totalSellingSum - totalDiscountSum;
-        final double totalNetProfitSum = totalFinalAmount - totalCostSum;
+        valueListenable: _cartNotifier,
+        builder: (context, _cart, child) {
+          final double totalCostSum = _cart.fold(
+            0.0,
+            (sum, i) => sum + i.totalPurchaseCost,
+          );
+          final double totalSellingSum = _cart.fold(
+            0.0,
+            (sum, i) => sum + i.totalSellingAmount,
+          );
+          final double itemDiscountSum = _cart.fold(
+            0.0,
+            (sum, i) => sum + i.totalDiscountAmount,
+          );
+          final double totalDiscountSum = itemDiscountSum + _globalDiscount;
+          final double totalFinalAmount = totalSellingSum - totalDiscountSum;
+          final double totalNetProfitSum = totalFinalAmount - totalCostSum;
 
-        return Container(
-              width: double.infinity,
-              color: AppColors.surface,
-              child: Column(
-                children: [
-                  // Sidebar Header
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    color: AppColors.background,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.shopping_cart, color: AppColors.primaryLight),
-                            SizedBox(width: 8),
-                            Text('تفاصيل الطلب والسلة (25%)',
-                                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontHeader)),
-                          ],
-                        ),
-                        if (_cart.isNotEmpty)
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _cartNotifier.value = [];
-                                _cardQuantitiesNotifier.value = {};
-                                _globalDiscount = 0.0;
-                              });
-                            },
-                            child: const Text('محي السلة', style: TextStyle(color: AppColors.danger, fontSize: AppSizes.fontNormal)),
+          return Container(
+            width: double.infinity,
+            color: AppColors.surface,
+            child: Column(
+              children: [
+                // Sidebar Header
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  color: AppColors.background,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.shopping_cart,
+                            color: AppColors.primaryLight,
                           ),
-                      ],
-                    ),
-                  ),
-
-                  // Cart Items List
-                  Expanded(
-                    child: _cart.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.remove_shopping_cart_outlined, size: 48, color: AppColors.textGray.withOpacity(0.3)),
-                                const SizedBox(height: 8),
-                                Text('السلة فارغة. اضغط + في كارت المنتج لإضافته',
-                                    style: TextStyle(color: AppColors.textHint, fontSize: AppSizes.fontMedium)),
-                              ],
+                          SizedBox(width: 8),
+                          Text(
+                            'تفاصيل الطلب والسلة (25%)',
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: AppSizes.fontHeader,
                             ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(10),
-                            itemCount: _cart.length,
-                            itemBuilder: (context, index) {
-                              final item = _cart[index];
-                              final pId = item.product.id;
-
-                                                            return CartItemWidget(
-                                item: item,
-                                onUpdate: () {
-                                  _cartNotifier.value = List.from(_cartNotifier.value);
-                                  if (_activeTable != null) _debouncedSaveTableOrder();
-                                },
-                                onUpdateQuantity: _updateProductQuantity,
-                              );
-                            },
                           ),
-                  ),
-
-                  // BOTTOM SUMMARY PANEL WITH FULLY EDITABLE INTERACTIVE TOTALS & FOCUS RETENTION
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    color: AppColors.background,
-                    child: Column(
-                      children: [
-                        CartSummaryWidget(
-                          totalCostSum: totalCostSum,
-                          totalSellingSum: totalSellingSum,
-                          totalDiscountSum: totalDiscountSum,
-                          totalFinalAmount: totalFinalAmount,
-                          totalNetProfitSum: totalNetProfitSum,
-                          totalItems: _cart.length,
-                          canViewPurchasePrice: appPermissions.canViewPurchasePrice,
-                          canViewProfit: appPermissions.canViewProfit,
-                          onUpdateTotalSelling: (newTotal) {
+                        ],
+                      ),
+                      if (_cart.isNotEmpty)
+                        TextButton(
+                          onPressed: () {
                             setState(() {
-                              _customTotalSellingPrice = newTotal;
+                              _cartNotifier.value = [];
+                              _cardQuantitiesNotifier.value = {};
+                              _globalDiscount = 0.0;
                             });
                           },
-                          onUpdateTotalDiscount: (newDisc) {
-                            setState(() {
-                              _updateCartTotalDiscount(newDisc);
-                            });
-                          },
-                          onUpdateFinalTotal: (newFinal) {
-                            setState(() {
-                              _updateCartFinalTotal(newFinal);
-                            });
-                          },
-                        ),
-                        const SizedBox(height: 8),
-
-                        SizedBox(
-                          width: double.infinity,
-                          height: 46,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _cart.isNotEmpty ? AppColors.success : AppColors.border,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          child: const Text(
+                            'محي السلة',
+                            style: TextStyle(
+                              color: AppColors.danger,
+                              fontSize: AppSizes.fontNormal,
                             ),
-                            icon: const Icon(Icons.print, color: Colors.white),
-                            label: Text(_activeTable != null ? 'إكمال وحساب طاولة ${_activeTable!['table_number']}' : 'إكمال البيع وطباعة الفاتورة',
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge)),
-                            onPressed: _cart.isNotEmpty ? _completeCheckout : null,
                           ),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
-                ],
-              ),
-            );
-          });
+                ),
+
+                // Cart Items List
+                Expanded(
+                  child: _cart.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.remove_shopping_cart_outlined,
+                                size: 48,
+                                color: AppColors.textGray.withOpacity(0.3),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'السلة فارغة. اضغط + في كارت المنتج لإضافته',
+                                style: TextStyle(
+                                  color: AppColors.textHint,
+                                  fontSize: AppSizes.fontMedium,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(10),
+                          itemCount: _cart.length,
+                          itemBuilder: (context, index) {
+                            final item = _cart[index];
+                            final pId = item.product.id;
+
+                            return CartItemWidget(
+                              item: item,
+                              onUpdate: () {
+                                _cartNotifier.value = List.from(
+                                  _cartNotifier.value,
+                                );
+                                if (_activeTable != null)
+                                  _debouncedSaveTableOrder();
+                              },
+                              onUpdateQuantity: _updateProductQuantity,
+                            );
+                          },
+                        ),
+                ),
+
+                // BOTTOM SUMMARY PANEL WITH FULLY EDITABLE INTERACTIVE TOTALS & FOCUS RETENTION
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  color: AppColors.background,
+                  child: Column(
+                    children: [
+                      CartSummaryWidget(
+                        totalCostSum: totalCostSum,
+                        totalSellingSum: totalSellingSum,
+                        totalDiscountSum: totalDiscountSum,
+                        totalFinalAmount: totalFinalAmount,
+                        totalNetProfitSum: totalNetProfitSum,
+                        totalItems: _cart.length,
+                        canViewPurchasePrice:
+                            appPermissions.canViewPurchasePrice,
+                        canViewProfit: appPermissions.canViewProfit,
+                        onUpdateTotalSelling: (newTotal) {
+                          setState(() {
+                            _customTotalSellingPrice = newTotal;
+                          });
+                          if (_activeTable != null) _debouncedSaveTableOrder();
+                        },
+                        onUpdateTotalDiscount: (newDisc) {
+                          setState(() {
+                            _updateCartTotalDiscount(newDisc);
+                          });
+                          if (_activeTable != null) _debouncedSaveTableOrder();
+                        },
+                        onUpdateFinalTotal: (newFinal) {
+                          setState(() {
+                            _updateCartFinalTotal(newFinal);
+                          });
+                          if (_activeTable != null) _debouncedSaveTableOrder();
+                        },
+                      ),
+                      const SizedBox(height: 8),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 46,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _cart.isNotEmpty
+                                ? AppColors.success
+                                : AppColors.border,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: const Icon(Icons.print, color: Colors.white),
+                          label: Text(
+                            _activeTable != null
+                                ? 'إكمال وحساب طاولة ${_activeTable!['table_number']}'
+                                : 'إكمال البيع وطباعة الفاتورة',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: AppSizes.fontLarge,
+                            ),
+                          ),
+                          onPressed: _cart.isNotEmpty
+                              ? _completeCheckout
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
     }
 
     return Scaffold(
@@ -1824,11 +2716,19 @@ class _PosScreenState extends State<PosScreen> {
           return ValueListenableBuilder<List<CartItemModel>>(
             valueListenable: _cartNotifier,
             builder: (context, cart, _) {
-              final double baseSellingSum = cart.fold(0.0, (sum, i) => sum + i.totalSellingAmount);
-    final double totalSellingSum = _customTotalSellingPrice ?? baseSellingSum;
-              final double itemDiscountSum = cart.fold(0.0, (sum, i) => sum + i.totalDiscountAmount);
+              final double baseSellingSum = cart.fold(
+                0.0,
+                (sum, i) => sum + i.totalSellingAmount,
+              );
+              final double totalSellingSum =
+                  _customTotalSellingPrice ?? baseSellingSum;
+              final double itemDiscountSum = cart.fold(
+                0.0,
+                (sum, i) => sum + i.totalDiscountAmount,
+              );
               final double totalDiscountSum = itemDiscountSum + _globalDiscount;
-              final double totalFinalAmount = totalSellingSum - totalDiscountSum;
+              final double totalFinalAmount =
+                  totalSellingSum - totalDiscountSum;
               return FloatingActionButton.extended(
                 backgroundColor: AppColors.primarySolid,
                 onPressed: () {
@@ -1841,7 +2741,9 @@ class _PosScreenState extends State<PosScreen> {
                       child: FractionallySizedBox(
                         heightFactor: 0.9,
                         child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(20),
+                          ),
                           child: buildCartArea(),
                         ),
                       ),
@@ -1849,12 +2751,17 @@ class _PosScreenState extends State<PosScreen> {
                   );
                 },
                 icon: const Icon(Icons.shopping_cart, color: Colors.white),
-                label: Text('${cart.length} منتجات - ${totalFinalAmount.toStringAsFixed(0)} د.ع', 
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                label: Text(
+                  '${cart.length} منتجات - ${totalFinalAmount.toStringAsFixed(0)} د.ع',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               );
-            }
+            },
           );
-        }
+        },
       ),
       body: Directionality(
         textDirection: TextDirection.rtl,
@@ -1862,22 +2769,21 @@ class _PosScreenState extends State<PosScreen> {
           builder: (context, constraints) {
             bool isMobile = constraints.maxWidth < 800;
             if (isMobile) {
-               return buildProductsArea();
+              return buildProductsArea();
             } else {
-               return Row(
-                 children: [
-                   Expanded(flex: 75, child: buildProductsArea()),
-                   SizedBox(width: 410, child: buildCartArea()),
-                 ],
-               );
+              return Row(
+                children: [
+                  Expanded(flex: 75, child: buildProductsArea()),
+                  SizedBox(width: 410, child: buildCartArea()),
+                ],
+              );
             }
-          }
+          },
         ),
       ),
     );
   }
 }
-
 
 class CartSummaryWidget extends StatefulWidget {
   final double totalCostSum;
@@ -1924,9 +2830,15 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
   @override
   void initState() {
     super.initState();
-    _sumSellCtrl = TextEditingController(text: widget.totalSellingSum.toStringAsFixed(0));
-    _sumDiscCtrl = TextEditingController(text: widget.totalDiscountSum.toStringAsFixed(0));
-    _sumFinalCtrl = TextEditingController(text: widget.totalFinalAmount.toStringAsFixed(0));
+    _sumSellCtrl = TextEditingController(
+      text: widget.totalSellingSum.toStringAsFixed(0),
+    );
+    _sumDiscCtrl = TextEditingController(
+      text: widget.totalDiscountSum.toStringAsFixed(0),
+    );
+    _sumFinalCtrl = TextEditingController(
+      text: widget.totalFinalAmount.toStringAsFixed(0),
+    );
     ThemeService.themeModeNotifier.addListener(_onThemeChanged);
   }
 
@@ -1973,25 +2885,42 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                 Expanded(
                   child: Text(
                     'المجموع الكلي للطلب',
-                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: AppSizes.fontLarge,
+                    ),
                   ),
                 ),
                 Text(
                   '(${widget.totalItems} منتجات)',
-                  style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal),
+                  style: TextStyle(
+                    color: AppColors.textGray,
+                    fontSize: AppSizes.fontNormal,
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            
+
             // Total Selling Display
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('السعر الكلي:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                Text(
+                  'السعر الكلي:',
+                  style: TextStyle(
+                    color: AppColors.textGray,
+                    fontSize: AppSizes.fontNormal,
+                  ),
+                ),
                 Text(
                   '${widget.totalSellingSum.toStringAsFixed(0)} د.ع',
-                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.fontMedium,
+                  ),
                 ),
               ],
             ),
@@ -2002,34 +2931,62 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('الخصم الكلي:', style: TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal)),
+                    const Text(
+                      'الخصم الكلي:',
+                      style: TextStyle(
+                        color: AppColors.warning,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
                     Text(
                       '-${widget.totalDiscountSum.toStringAsFixed(0)} د.ع',
-                      style: const TextStyle(color: AppColors.warning, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                      style: const TextStyle(
+                        color: AppColors.warning,
+                        fontWeight: FontWeight.bold,
+                        fontSize: AppSizes.fontMedium,
+                      ),
                     ),
                   ],
                 ),
               ),
-            
+
             const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('السعر النهائي للطلب:', style: TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold, fontSize: AppSizes.fontNormal)),
+                Text(
+                  'السعر النهائي للطلب:',
+                  style: TextStyle(
+                    color: AppColors.primaryLight,
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.fontNormal,
+                  ),
+                ),
                 Text(
                   '${widget.totalFinalAmount.toStringAsFixed(0)} د.ع',
-                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.fontLarge,
+                  ),
                 ),
               ],
             ),
-            
+
             Divider(color: AppColors.border, height: 24),
-            
+
             // Show Details Button
             Center(
               child: TextButton.icon(
-                icon: Icon(_isExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.primaryLight, size: 20),
-                label: Text(_isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل', style: TextStyle(color: AppColors.primaryLight)),
+                icon: Icon(
+                  _isExpanded ? Icons.expand_less : Icons.expand_more,
+                  color: AppColors.primaryLight,
+                  size: 20,
+                ),
+                label: Text(
+                  _isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل',
+                  style: TextStyle(color: AppColors.primaryLight),
+                ),
                 onPressed: () {
                   setState(() {
                     _isExpanded = !_isExpanded;
@@ -2040,13 +2997,25 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
 
             if (_isExpanded) ...[
               const SizedBox(height: 12),
-              
+
               if (widget.canViewPurchasePrice) ...[
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('مجموع سعر الشراء:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
-                    Text('${widget.totalCostSum.toStringAsFixed(0)} (ثابتة)', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal)),
+                    Text(
+                      'مجموع سعر الشراء:',
+                      style: TextStyle(
+                        color: AppColors.textGray,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
+                    Text(
+                      '${widget.totalCostSum.toStringAsFixed(0)} (ثابتة)',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -2055,10 +3024,25 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               // Edit Total Selling
               Row(
                 children: [
-                  SizedBox(width: 90, child: Text('سعر البيع الكلي:', style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal))),
+                  SizedBox(
+                    width: 90,
+                    child: Text(
+                      'سعر البيع الكلي:',
+                      style: TextStyle(
+                        color: AppColors.primaryLight,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
+                  ),
                   IconButton(
-                    icon: Icon(Icons.remove_circle, color: AppColors.primaryLight, size: 20),
-                    onPressed: () => widget.onUpdateTotalSelling(widget.totalSellingSum - 500),
+                    icon: Icon(
+                      Icons.remove_circle,
+                      color: AppColors.primaryLight,
+                      size: 20,
+                    ),
+                    onPressed: () => widget.onUpdateTotalSelling(
+                      widget.totalSellingSum - 500,
+                    ),
                   ),
                   Expanded(
                     child: SizedBox(
@@ -2067,7 +3051,11 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                         controller: _sumSellCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: AppColors.primaryLight,
+                          fontSize: AppSizes.fontNormal,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
@@ -2082,8 +3070,14 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: Icon(Icons.add_circle, color: AppColors.primaryLight, size: 20),
-                    onPressed: () => widget.onUpdateTotalSelling(widget.totalSellingSum + 500),
+                    icon: Icon(
+                      Icons.add_circle,
+                      color: AppColors.primaryLight,
+                      size: 20,
+                    ),
+                    onPressed: () => widget.onUpdateTotalSelling(
+                      widget.totalSellingSum + 500,
+                    ),
                   ),
                 ],
               ),
@@ -2092,10 +3086,25 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               // Edit Total Discount
               Row(
                 children: [
-                  const SizedBox(width: 90, child: Text('الخصم الكلي:', style: TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal))),
+                  const SizedBox(
+                    width: 90,
+                    child: Text(
+                      'الخصم الكلي:',
+                      style: TextStyle(
+                        color: AppColors.warning,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.remove_circle, color: AppColors.warning, size: 20),
-                    onPressed: () => widget.onUpdateTotalDiscount(widget.totalDiscountSum - 250),
+                    icon: const Icon(
+                      Icons.remove_circle,
+                      color: AppColors.warning,
+                      size: 20,
+                    ),
+                    onPressed: () => widget.onUpdateTotalDiscount(
+                      widget.totalDiscountSum - 250,
+                    ),
                   ),
                   Expanded(
                     child: SizedBox(
@@ -2104,7 +3113,11 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                         controller: _sumDiscCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: AppColors.warning,
+                          fontSize: AppSizes.fontNormal,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
@@ -2119,8 +3132,14 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add_circle, color: AppColors.warning, size: 20),
-                    onPressed: () => widget.onUpdateTotalDiscount(widget.totalDiscountSum + 250),
+                    icon: const Icon(
+                      Icons.add_circle,
+                      color: AppColors.warning,
+                      size: 20,
+                    ),
+                    onPressed: () => widget.onUpdateTotalDiscount(
+                      widget.totalDiscountSum + 250,
+                    ),
                   ),
                 ],
               ),
@@ -2129,10 +3148,26 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               // Edit Final Amount
               Row(
                 children: [
-                  SizedBox(width: 90, child: Text('السعر النهائي:', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold))),
+                  SizedBox(
+                    width: 90,
+                    child: Text(
+                      'السعر النهائي:',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: AppSizes.fontNormal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.remove_circle, color: Colors.white, size: 20),
-                    onPressed: () => widget.onUpdateFinalTotal((widget.totalFinalAmount - 250).clamp(0, 9999999)),
+                    icon: const Icon(
+                      Icons.remove_circle,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    onPressed: () => widget.onUpdateFinalTotal(
+                      (widget.totalFinalAmount - 250).clamp(0, 9999999),
+                    ),
                   ),
                   Expanded(
                     child: SizedBox(
@@ -2141,7 +3176,11 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                         controller: _sumFinalCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontLarge, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: AppColors.primaryLight,
+                          fontSize: AppSizes.fontLarge,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
@@ -2156,27 +3195,47 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add_circle, color: Colors.white, size: 20),
-                    onPressed: () => widget.onUpdateFinalTotal((widget.totalFinalAmount + 250).clamp(0, 9999999)),
+                    icon: const Icon(
+                      Icons.add_circle,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    onPressed: () => widget.onUpdateFinalTotal(
+                      (widget.totalFinalAmount + 250).clamp(0, 9999999),
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              
+
               if (widget.canViewProfit) ...[
                 Divider(color: AppColors.border, height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('مجموع صافي الربح:', style: TextStyle(color: AppColors.success, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold)),
-                    Text('${widget.totalNetProfitSum.toStringAsFixed(0)}', style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge)),
+                    const Text(
+                      'مجموع صافي الربح:',
+                      style: TextStyle(
+                        color: AppColors.success,
+                        fontSize: AppSizes.fontNormal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      '${widget.totalNetProfitSum.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                        fontSize: AppSizes.fontLarge,
+                      ),
+                    ),
                   ],
                 ),
               ],
-            ]
-          ]
-        )
-      )
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2221,9 +3280,15 @@ class _CartItemWidgetState extends State<CartItemWidget> {
         ? widget.item.quantity.toInt().toString()
         : widget.item.quantity.toString();
     _qtyCtrl = TextEditingController(text: qStr);
-    _unitDiscountCtrl = TextEditingController(text: widget.item.discount.toStringAsFixed(0));
-    _discountCtrl = TextEditingController(text: widget.item.totalDiscountAmount.toStringAsFixed(0));
-    _totalCtrl = TextEditingController(text: widget.item.totalPrice.toStringAsFixed(0));
+    _unitDiscountCtrl = TextEditingController(
+      text: widget.item.discount.toStringAsFixed(0),
+    );
+    _discountCtrl = TextEditingController(
+      text: widget.item.totalDiscountAmount.toStringAsFixed(0),
+    );
+    _totalCtrl = TextEditingController(
+      text: widget.item.totalPrice.toStringAsFixed(0),
+    );
   }
 
   @override
@@ -2276,12 +3341,20 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                   child: Text(
                     widget.item.product.name,
                     style: TextStyle(
-                        color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: AppSizes.fontLarge,
+                    ),
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close, color: AppColors.danger, size: 18),
-                  onPressed: () => widget.onUpdateQuantity(widget.item.product, 0),
+                  icon: const Icon(
+                    Icons.close,
+                    color: AppColors.danger,
+                    size: 18,
+                  ),
+                  onPressed: () =>
+                      widget.onUpdateQuantity(widget.item.product, 0),
                 ),
               ],
             ),
@@ -2290,10 +3363,29 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             // 1. Quantity Field
             Row(
               children: [
-                SizedBox(width: 80, child: Text('الكمية/الوزن:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal))),
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    'الكمية/الوزن:',
+                    style: TextStyle(
+                      color: AppColors.textGray,
+                      fontSize: AppSizes.fontNormal,
+                    ),
+                  ),
+                ),
                 IconButton(
-                  icon: const Icon(Icons.remove_circle, color: AppColors.danger, size: 20),
-                  onPressed: () => widget.onUpdateQuantity(widget.item.product, widget.item.quantity - (widget.item.product.isWeight ? widget.item.product.weightIncrementStep : 1.0)),
+                  icon: const Icon(
+                    Icons.remove_circle,
+                    color: AppColors.danger,
+                    size: 20,
+                  ),
+                  onPressed: () => widget.onUpdateQuantity(
+                    widget.item.product,
+                    widget.item.quantity -
+                        (widget.item.product.isWeight
+                            ? widget.item.product.weightIncrementStep
+                            : 1.0),
+                  ),
                 ),
                 Expanded(
                   child: SizedBox(
@@ -2302,7 +3394,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                       controller: _qtyCtrl,
                       keyboardType: TextInputType.number,
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: AppSizes.fontNormal,
+                        fontWeight: FontWeight.bold,
+                      ),
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: AppColors.surface,
@@ -2317,8 +3413,18 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add_circle, color: AppColors.success, size: 20),
-                  onPressed: () => widget.onUpdateQuantity(widget.item.product, widget.item.quantity + (widget.item.product.isWeight ? widget.item.product.weightIncrementStep : 1.0)),
+                  icon: const Icon(
+                    Icons.add_circle,
+                    color: AppColors.success,
+                    size: 20,
+                  ),
+                  onPressed: () => widget.onUpdateQuantity(
+                    widget.item.product,
+                    widget.item.quantity +
+                        (widget.item.product.isWeight
+                            ? widget.item.product.weightIncrementStep
+                            : 1.0),
+                  ),
                 ),
               ],
             ),
@@ -2328,14 +3434,24 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('المبلغ:', style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontNormal)),
+                Text(
+                  'المبلغ:',
+                  style: TextStyle(
+                    color: AppColors.textGray,
+                    fontSize: AppSizes.fontNormal,
+                  ),
+                ),
                 Text(
                   '${widget.item.totalSellingAmount.toStringAsFixed(0)} د.ع',
-                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.fontMedium,
+                  ),
                 ),
               ],
             ),
-            
+
             // Discount Text (if any)
             if (widget.item.totalDiscountAmount > 0)
               Padding(
@@ -2343,34 +3459,62 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('مجموع الخصم:', style: TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal)),
+                    const Text(
+                      'مجموع الخصم:',
+                      style: TextStyle(
+                        color: AppColors.warning,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
                     Text(
                       '-${widget.item.totalDiscountAmount.toStringAsFixed(0)} د.ع',
-                      style: const TextStyle(color: AppColors.warning, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                      style: const TextStyle(
+                        color: AppColors.warning,
+                        fontWeight: FontWeight.bold,
+                        fontSize: AppSizes.fontMedium,
+                      ),
                     ),
                   ],
                 ),
               ),
-            
+
             const SizedBox(height: 4),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('السعر النهائي:', style: TextStyle(color: AppColors.primaryLight, fontWeight: FontWeight.bold, fontSize: AppSizes.fontNormal)),
+                Text(
+                  'السعر النهائي:',
+                  style: TextStyle(
+                    color: AppColors.primaryLight,
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.fontNormal,
+                  ),
+                ),
                 Text(
                   '${widget.item.totalPrice.toStringAsFixed(0)} د.ع',
-                  style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontMedium),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppSizes.fontMedium,
+                  ),
                 ),
               ],
             ),
-            
+
             Divider(color: AppColors.border, height: 24),
-            
+
             // Show Details Button
             Center(
               child: TextButton.icon(
-                icon: Icon(_isExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.primaryLight, size: 20),
-                label: Text(_isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل', style: TextStyle(color: AppColors.primaryLight)),
+                icon: Icon(
+                  _isExpanded ? Icons.expand_less : Icons.expand_more,
+                  color: AppColors.primaryLight,
+                  size: 20,
+                ),
+                label: Text(
+                  _isExpanded ? 'إخفاء التفاصيل' : 'عرض التفاصيل',
+                  style: TextStyle(color: AppColors.primaryLight),
+                ),
                 onPressed: () {
                   setState(() {
                     _isExpanded = !_isExpanded;
@@ -2381,14 +3525,79 @@ class _CartItemWidgetState extends State<CartItemWidget> {
 
             if (_isExpanded) ...[
               const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Wrap(
+                  spacing: 16,
+                  runSpacing: 8,
+                  children: [
+                    Text(
+                      'الكمية: ${widget.item.quantity}',
+                      style: TextStyle(color: AppColors.textGray),
+                    ),
+                    Text(
+                      'شراء: ${widget.item.unitPurchasePrice.toStringAsFixed(0)} د.ع',
+                      style: TextStyle(color: AppColors.textGray),
+                    ),
+                    Text(
+                      'بيع: ${widget.item.unitSellingPrice.toStringAsFixed(0)} د.ع',
+                      style: TextStyle(color: AppColors.primaryLight),
+                    ),
+                    Text(
+                      'كلفة الشراء: ${widget.item.totalPurchaseCost.toStringAsFixed(0)} د.ع',
+                      style: TextStyle(color: AppColors.textGray),
+                    ),
+                    Text(
+                      'الخصم: ${widget.item.totalDiscountAmount.toStringAsFixed(0)} د.ع',
+                      style: TextStyle(color: AppColors.warning),
+                    ),
+                    Text(
+                      'الإجمالي: ${widget.item.totalPrice.toStringAsFixed(0)} د.ع',
+                      style: TextStyle(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'الربح: ${widget.item.netProfit.toStringAsFixed(0)} د.ع',
+                      style: TextStyle(
+                        color: AppColors.historyIcon,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
               // Unit Discount Field Editable
               Row(
                 children: [
-                  const SizedBox(width: 80, child: Text('خصم القطعة:', style: TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal))),
+                  const SizedBox(
+                    width: 80,
+                    child: Text(
+                      'خصم القطعة:',
+                      style: TextStyle(
+                        color: AppColors.warning,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.remove, color: AppColors.warning, size: 18),
+                    icon: const Icon(
+                      Icons.remove,
+                      color: AppColors.warning,
+                      size: 18,
+                    ),
                     onPressed: () {
-                      widget.item.discount = (widget.item.discount - 100).clamp(0, 9999999);
+                      widget.item.discount = (widget.item.discount - 100).clamp(
+                        0,
+                        9999999,
+                      );
                       widget.onUpdate();
                     },
                   ),
@@ -2399,7 +3608,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         controller: _unitDiscountCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: AppColors.warning,
+                          fontSize: AppSizes.fontNormal,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
@@ -2415,7 +3628,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add, color: AppColors.warning, size: 18),
+                    icon: const Icon(
+                      Icons.add,
+                      color: AppColors.warning,
+                      size: 18,
+                    ),
                     onPressed: () {
                       widget.item.discount += 100;
                       widget.onUpdate();
@@ -2428,11 +3645,28 @@ class _CartItemWidgetState extends State<CartItemWidget> {
               // Total Discount Field Editable
               Row(
                 children: [
-                  const SizedBox(width: 80, child: Text('الخصم الكلي:', style: TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal))),
+                  const SizedBox(
+                    width: 80,
+                    child: Text(
+                      'الخصم الكلي:',
+                      style: TextStyle(
+                        color: AppColors.warning,
+                        fontSize: AppSizes.fontNormal,
+                      ),
+                    ),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.remove, color: AppColors.warning, size: 18),
+                    icon: const Icon(
+                      Icons.remove,
+                      color: AppColors.warning,
+                      size: 18,
+                    ),
                     onPressed: () {
-                      widget.item.totalDiscountAmount = (widget.item.totalDiscountAmount - 100).clamp(0, 9999999);
+                      widget.item.totalDiscountAmount =
+                          (widget.item.totalDiscountAmount - 100).clamp(
+                            0,
+                            9999999,
+                          );
                       widget.onUpdate();
                     },
                   ),
@@ -2443,7 +3677,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         controller: _discountCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(color: AppColors.warning, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: AppColors.warning,
+                          fontSize: AppSizes.fontNormal,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
@@ -2459,7 +3697,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add, color: AppColors.warning, size: 18),
+                    icon: const Icon(
+                      Icons.add,
+                      color: AppColors.warning,
+                      size: 18,
+                    ),
                     onPressed: () {
                       widget.item.totalDiscountAmount += 100;
                       widget.onUpdate();
@@ -2472,11 +3714,26 @@ class _CartItemWidgetState extends State<CartItemWidget> {
               // Total Price Editable
               Row(
                 children: [
-                  SizedBox(width: 80, child: Text('السعر النهائي:', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold))),
+                  SizedBox(
+                    width: 80,
+                    child: Text(
+                      'السعر النهائي:',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: AppSizes.fontNormal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                   IconButton(
-                    icon: const Icon(Icons.remove, color: Colors.white, size: 18),
+                    icon: const Icon(
+                      Icons.remove,
+                      color: Colors.white,
+                      size: 18,
+                    ),
                     onPressed: () {
-                      widget.item.totalPrice = (widget.item.totalPrice - 250).clamp(0, 9999999);
+                      widget.item.totalPrice = (widget.item.totalPrice - 250)
+                          .clamp(0, 9999999);
                       widget.onUpdate();
                     },
                   ),
@@ -2487,7 +3744,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         controller: _totalCtrl,
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: AppSizes.fontNormal,
+                          fontWeight: FontWeight.bold,
+                        ),
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: AppColors.surface,
@@ -2513,7 +3774,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                   ),
                 ],
               ),
-            ]
+            ],
           ],
         ),
       ),
