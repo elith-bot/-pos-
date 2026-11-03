@@ -120,7 +120,7 @@ class WorkflowTests(unittest.TestCase):
         # 21:30 UTC belongs to the following day in Baghdad.
         Sale.query.one().created_at = datetime(2026, 10, 31, 21, 30)
         db.session.commit()
-        with patch('app.datetime') as clock:
+        with patch('report_filters.datetime') as clock:
             clock.utcnow.return_value = datetime(2026, 10, 31, 22)
             clock.side_effect = datetime
             today = report()

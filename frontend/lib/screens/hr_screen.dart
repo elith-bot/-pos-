@@ -373,280 +373,290 @@ class _HrScreenState extends State<HrScreen> {
         .fold<double>(0, (v, p) => v + (p['net_salary'] as num).toDouble());
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: RefreshIndicator(
-        onRefresh: load,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                const Text(
-                  'الموارد البشرية',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-                ),
-                FilledButton.icon(
-                  onPressed: () => editStaff(),
-                  icon: const Icon(Icons.person_add_outlined),
-                  label: const Text('إضافة موظف وعقد'),
-                ),
-                IconButton(
-                  onPressed: loading ? null : load,
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'تحديث',
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                Chip(
-                  label: Text(
-                    'الموظفون النشطون: ${staff.where((s) => s['active'] == true).length}',
+      child: Material(
+        color: AppColors.background,
+        child: RefreshIndicator(
+          onRefresh: load,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text(
+                    'الموارد البشرية',
+                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                   ),
-                ),
-                Chip(label: Text('مصروف الرواتب: ${amount(paid)}')),
-                Chip(label: Text('مسودات غير مصروفة: ${amount(due)}')),
-              ],
-            ),
-            Row(
-              children: [
-                IconButton(
-                  onPressed: loading
-                      ? null
-                      : () {
-                          setState(
-                            () => month = DateTime(month.year, month.month - 1),
-                          );
-                          load();
-                        },
-                  icon: const Icon(Icons.chevron_right),
-                ),
-                Text(
-                  monthLabel(month),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                IconButton(
-                  onPressed: loading
-                      ? null
-                      : () {
-                          setState(
-                            () => month = DateTime(month.year, month.month + 1),
-                          );
-                          load();
-                        },
-                  icon: const Icon(Icons.chevron_left),
-                ),
-              ],
-            ),
-            SectionTabs(
-              labels: const ['الموظفون والعقود', 'الحضور والإجازات', 'الرواتب'],
-              selected: section,
-              onSelected: (i) => setState(() => section = i),
-            ),
-            const SizedBox(height: 12),
-            if (loading) const LinearProgressIndicator(),
-            if (error != null)
-              panel(Text(error!, style: const TextStyle(color: Colors.red))),
-            if (!loading && error == null) ...[
-              if (section == 0) ...[
-                TextField(
-                  decoration: const InputDecoration(
-                    labelText: 'البحث عن موظف',
-                    prefixIcon: Icon(Icons.search),
+                  FilledButton.icon(
+                    onPressed: () => editStaff(),
+                    icon: const Icon(Icons.person_add_outlined),
+                    label: const Text('إضافة موظف وعقد'),
                   ),
-                  onChanged: (v) => setState(() => search = v),
-                ),
-                const SizedBox(height: 12),
-                if (people.isEmpty)
-                  panel(
-                    const Text(
-                      'أضف موظفاً وحدد عقده، ويمكن ربطه بحساب الدخول الحالي.',
+                  IconButton(
+                    onPressed: loading ? null : load,
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'تحديث',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  Chip(
+                    label: Text(
+                      'الموظفون النشطون: ${staff.where((s) => s['active'] == true).length}',
                     ),
                   ),
-                for (final s in people)
-                  panel(
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${s['name']} • ${s['job_title']}',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
+                  Chip(label: Text('مصروف الرواتب: ${amount(paid)}')),
+                  Chip(label: Text('مسودات غير مصروفة: ${amount(due)}')),
+                ],
+              ),
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: loading
+                        ? null
+                        : () {
+                            setState(
+                              () =>
+                                  month = DateTime(month.year, month.month - 1),
+                            );
+                            load();
+                          },
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                  Text(
+                    monthLabel(month),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    onPressed: loading
+                        ? null
+                        : () {
+                            setState(
+                              () =>
+                                  month = DateTime(month.year, month.month + 1),
+                            );
+                            load();
+                          },
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                ],
+              ),
+              SectionTabs(
+                labels: const [
+                  'الموظفون والعقود',
+                  'الحضور والإجازات',
+                  'الرواتب',
+                ],
+                selected: section,
+                onSelected: (i) => setState(() => section = i),
+              ),
+              const SizedBox(height: 12),
+              if (loading) const LinearProgressIndicator(),
+              if (error != null)
+                panel(Text(error!, style: const TextStyle(color: Colors.red))),
+              if (!loading && error == null) ...[
+                if (section == 0) ...[
+                  TextField(
+                    decoration: const InputDecoration(
+                      labelText: 'البحث عن موظف',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onChanged: (v) => setState(() => search = v),
+                  ),
+                  const SizedBox(height: 12),
+                  if (people.isEmpty)
+                    panel(
+                      const Text(
+                        'أضف موظفاً وحدد عقده، ويمكن ربطه بحساب الدخول الحالي.',
+                      ),
+                    ),
+                  for (final s in people)
+                    panel(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${s['name']} • ${s['job_title']}',
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
-                        Text(
-                          '${s['active'] == true ? 'نشط' : 'مؤرشف'} • التعيين: ${s['start_date']} • ${s['phone']}',
-                        ),
-                        Text(
-                          'الأجر ${payTypes[s['contract']['pay_type']] ?? ''}: ${amount(s['contract']['rate'])}',
-                        ),
-                        Wrap(
-                          spacing: 8,
-                          children: [
-                            TextButton.icon(
-                              onPressed: () => editStaff(s),
-                              icon: const Icon(Icons.edit_outlined),
-                              label: const Text('تعديل البيانات والعقد'),
-                            ),
-                            TextButton(
-                              onPressed: () => showContract(
-                                context,
-                                s['contract'],
-                                title: 'عقد ${s['name']}',
+                          Text(
+                            '${s['active'] == true ? 'نشط' : 'مؤرشف'} • التعيين: ${s['start_date']} • ${s['phone']}',
+                          ),
+                          Text(
+                            'الأجر ${payTypes[s['contract']['pay_type']] ?? ''}: ${amount(s['contract']['rate'])}',
+                          ),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              TextButton.icon(
+                                onPressed: () => editStaff(s),
+                                icon: const Icon(Icons.edit_outlined),
+                                label: const Text('تعديل البيانات والعقد'),
                               ),
-                              child: const Text('عرض العقد'),
-                            ),
-                            TextButton(
-                              onPressed: () async {
-                                try {
-                                  await ApiService.businessRequest(
-                                    '/api/hr/staff/${s['id']}',
-                                    method: 'PUT',
-                                    body: {'active': s['active'] != true},
-                                  );
-                                  await load();
-                                } catch (e) {
-                                  notify(e);
-                                }
-                              },
-                              child: Text(
-                                s['active'] == true
-                                    ? 'أرشفة الموظف'
-                                    : 'إعادة التفعيل',
+                              TextButton(
+                                onPressed: () => showContract(
+                                  context,
+                                  s['contract'],
+                                  title: 'عقد ${s['name']}',
+                                ),
+                                child: const Text('عرض العقد'),
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                              TextButton(
+                                onPressed: () async {
+                                  try {
+                                    await ApiService.businessRequest(
+                                      '/api/hr/staff/${s['id']}',
+                                      method: 'PUT',
+                                      body: {'active': s['active'] != true},
+                                    );
+                                    await load();
+                                  } catch (e) {
+                                    notify(e);
+                                  }
+                                },
+                                child: Text(
+                                  s['active'] == true
+                                      ? 'أرشفة الموظف'
+                                      : 'إعادة التفعيل',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                if (section == 1) ...[
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: FilledButton.icon(
+                      onPressed: () => recordAttendance(),
+                      icon: const Icon(Icons.event_available),
+                      label: const Text('تسجيل حضور / إجازة'),
                     ),
                   ),
-              ],
-              if (section == 1) ...[
-                Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: FilledButton.icon(
-                    onPressed: () => recordAttendance(),
-                    icon: const Icon(Icons.event_available),
-                    label: const Text('تسجيل حضور / إجازة'),
+                  const SizedBox(height: 12),
+                  Text(
+                    'حضور: ${attendance.where((a) => a['status'] == 'present').length} • غياب: ${attendance.where((a) => a['status'] == 'absent').length} • إجازات: ${attendance.where((a) => a['status'] == 'leave').length}',
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'حضور: ${attendance.where((a) => a['status'] == 'present').length} • غياب: ${attendance.where((a) => a['status'] == 'absent').length} • إجازات: ${attendance.where((a) => a['status'] == 'leave').length}',
-                ),
-                if (attendance.isEmpty)
-                  panel(const Text('لا توجد سجلات حضور لهذا الشهر.')),
-                for (final a in attendance)
-                  panel(
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${a['staff_name']} • ${a['day']}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          '${attendanceTypes[a['status']]} • ${a['check_in']} — ${a['check_out']}',
-                        ),
-                        Text('${a['notes']}'),
-                        TextButton(
-                          onPressed: () => recordAttendance(a),
-                          child: const Text('تعديل الحضور'),
-                        ),
-                      ],
+                  if (attendance.isEmpty)
+                    panel(const Text('لا توجد سجلات حضور لهذا الشهر.')),
+                  for (final a in attendance)
+                    panel(
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${a['staff_name']} • ${a['day']}',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            '${attendanceTypes[a['status']]} • ${a['check_in']} — ${a['check_out']}',
+                          ),
+                          Text('${a['notes']}'),
+                          TextButton(
+                            onPressed: () => recordAttendance(a),
+                            child: const Text('تعديل الحضور'),
+                          ),
+                        ],
+                      ),
                     ),
+                ],
+                if (section == 2) ...[
+                  const Text(
+                    'يُحسب الراتب من العقد الساري والحضور المسجل. حفظ المسودة لا يُسجل مصروفاً؛ تأكيد الصرف فقط يسجله بتاريخ الدفع.',
                   ),
-              ],
-              if (section == 2) ...[
-                const Text(
-                  'يُحسب الراتب من العقد الساري والحضور المسجل. حفظ المسودة لا يُسجل مصروفاً؛ تأكيد الصرف فقط يسجله بتاريخ الدفع.',
-                ),
-                const SizedBox(height: 12),
-                for (final s in people.where(
-                  (s) =>
-                      s['active'] == true ||
-                      payroll.any((p) => p['staff_id'] == s['id']),
-                ))
-                  Builder(
-                    builder: (_) {
-                      final p = payroll
-                          .where((p) => p['staff_id'] == s['id'])
-                          .firstOrNull;
-                      return panel(
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${s['name']}',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            if (p == null)
-                              const Text('لم يُعدّ راتب هذا الشهر')
-                            else ...[
+                  const SizedBox(height: 12),
+                  for (final s in people.where(
+                    (s) =>
+                        s['active'] == true ||
+                        payroll.any((p) => p['staff_id'] == s['id']),
+                  ))
+                    Builder(
+                      builder: (_) {
+                        final p = payroll
+                            .where((p) => p['staff_id'] == s['id'])
+                            .firstOrNull;
+                        return panel(
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                               Text(
-                                'الأجر: ${amount(p['base_salary'])} • المكافآت: ${amount(p['bonus'])} • الخصومات: ${amount(p['deduction'])}',
-                              ),
-                              Text(
-                                'الصافي: ${amount(p['net_salary'])}',
-                                style: TextStyle(
-                                  color: AppColors.primaryLight,
+                                '${s['name']}',
+                                style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              Text(
-                                p['status'] == 'paid'
-                                    ? 'تم الصرف • ${p['paid_at']}'
-                                    : 'مسودة قيد المراجعة',
-                              ),
-                              Text('${p['notes']}'),
-                              TextButton(
-                                onPressed: () => showContract(
-                                  context,
-                                  p['calculation']['contract'] ?? {},
-                                  title: 'العقد المعتمد في راتب ${p['month']}',
+                              if (p == null)
+                                const Text('لم يُعدّ راتب هذا الشهر')
+                              else ...[
+                                Text(
+                                  'الأجر: ${amount(p['base_salary'])} • المكافآت: ${amount(p['bonus'])} • الخصومات: ${amount(p['deduction'])}',
                                 ),
-                                child: const Text('العقد المعتمد بالحساب'),
-                              ),
-                            ],
-                            if (p?['status'] != 'paid')
-                              Wrap(
-                                spacing: 12,
-                                children: [
-                                  OutlinedButton(
-                                    onPressed: () => preparePayroll(s, p),
-                                    child: Text(
-                                      p == null
-                                          ? 'إعداد الراتب'
-                                          : 'إعادة حساب / تعديل',
-                                    ),
+                                Text(
+                                  'الصافي: ${amount(p['net_salary'])}',
+                                  style: TextStyle(
+                                    color: AppColors.primaryLight,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  if (p != null)
-                                    FilledButton(
-                                      onPressed: busyIds.contains(p['id'])
-                                          ? null
-                                          : () => pay(p),
-                                      child: const Text('صرف الراتب'),
+                                ),
+                                Text(
+                                  p['status'] == 'paid'
+                                      ? 'تم الصرف • ${p['paid_at']}'
+                                      : 'مسودة قيد المراجعة',
+                                ),
+                                Text('${p['notes']}'),
+                                TextButton(
+                                  onPressed: () => showContract(
+                                    context,
+                                    p['calculation']['contract'] ?? {},
+                                    title:
+                                        'العقد المعتمد في راتب ${p['month']}',
+                                  ),
+                                  child: const Text('العقد المعتمد بالحساب'),
+                                ),
+                              ],
+                              if (p?['status'] != 'paid')
+                                Wrap(
+                                  spacing: 12,
+                                  children: [
+                                    OutlinedButton(
+                                      onPressed: () => preparePayroll(s, p),
+                                      child: Text(
+                                        p == null
+                                            ? 'إعداد الراتب'
+                                            : 'إعادة حساب / تعديل',
+                                      ),
                                     ),
-                                ],
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                                    if (p != null)
+                                      FilledButton(
+                                        onPressed: busyIds.contains(p['id'])
+                                            ? null
+                                            : () => pay(p),
+                                        child: const Text('صرف الراتب'),
+                                      ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                ],
               ],
             ],
-          ],
+          ),
         ),
       ),
     );

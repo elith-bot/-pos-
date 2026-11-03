@@ -20,20 +20,23 @@ class _EmployeesHubState extends State<EmployeesScreen> {
     if (!appPermissions.canManageEmployees)
       return const Center(child: Text('هذه الصفحة متاحة للإدارة فقط.'));
     if (!appPermissions.canManageHR) return const AccountsScreen();
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: SectionTabs(
-            labels: const ['الموارد البشرية', 'حسابات الدخول والصلاحيات'],
-            selected: section,
-            onSelected: (value) => setState(() => section = value),
+    return Material(
+      color: AppColors.background,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: SectionTabs(
+              labels: const ['الموارد البشرية', 'حسابات الدخول والصلاحيات'],
+              selected: section,
+              onSelected: (value) => setState(() => section = value),
+            ),
           ),
-        ),
-        Expanded(
-          child: section == 0 ? const HrScreen() : const AccountsScreen(),
-        ),
-      ],
+          Expanded(
+            child: section == 0 ? const HrScreen() : const AccountsScreen(),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -3,3 +3,7 @@ Flask-SQLAlchemy==3.1.1
 Flask-Cors==4.0.1
 PyMySQL==1.1.1
 python-dotenv==1.0.1
+reportlab==5.1.0
+openpyxl==3.1.5
+arabic-reshaper==3.0.0
+python-bidi==0.6.7

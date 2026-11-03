@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../services/permissions_service.dart';
+import 'export_menu.dart';
 
 /// A historical receipt uses the amounts recorded at checkout, never current prices.
 class SaleDetailsDialog extends StatelessWidget {
@@ -130,6 +131,11 @@ class SaleDetailsDialog extends StatelessWidget {
                       onPressed: () => Navigator.pop(context),
                       icon: const Icon(Icons.close),
                     ),
+                    if (sale['id'] is int)
+                      ExportMenu(
+                        path: '/api/sales/${sale['id']}/export',
+                        label: 'تصدير تفاصيل الطلب',
+                      ),
                   ],
                 ),
               ),

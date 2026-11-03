@@ -11,6 +11,7 @@ import '../services/api_service.dart';
 import '../services/permissions_service.dart';
 import '../widgets/product_masonry.dart';
 import '../widgets/product_photo_body.dart';
+import '../widgets/export_menu.dart';
 
 class PosScreen extends StatefulWidget {
   const PosScreen({super.key});
@@ -942,14 +943,19 @@ class PosScreenState extends State<PosScreen> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      if (!isWeight) ...[
+                      ...[
                         Expanded(
                           child: TextField(
                             controller: stockCtrl,
                             keyboardType: TextInputType.number,
                             style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
-                              labelText: 'الكمية الأوليّة',
+                              labelText: isWeight
+                                  ? 'الوزن الأولي بالمخزن (غم)'
+                                  : 'الكمية الأوليّة',
+                              helperText: isWeight
+                                  ? 'مثال: 1 كغم = 1000 غم'
+                                  : null,
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
@@ -1300,14 +1306,16 @@ class PosScreenState extends State<PosScreen> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      if (!isWeight) ...[
+                      ...[
                         Expanded(
                           child: TextField(
                             controller: stockCtrl,
                             keyboardType: TextInputType.number,
                             style: TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
-                              labelText: 'الكمية في المخزن',
+                              labelText: isWeight
+                                  ? 'الوزن في المخزن (غم)'
+                                  : 'الكمية في المخزن',
                               labelStyle: TextStyle(color: AppColors.textGray),
                               filled: true,
                               fillColor: AppColors.background,
@@ -1961,7 +1969,7 @@ class PosScreenState extends State<PosScreen> {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: quantity > 0 ? AppColors.primaryLight : AppColors.border,
-            width: quantity > 0 ? 2 : 1,
+            width: 2,
           ),
         ),
         child: _photoCardContent(
@@ -2238,6 +2246,12 @@ class PosScreenState extends State<PosScreen> {
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                     child: ProductMasonry(
                       columns: columns,
+                      spans: _products
+                          .map(
+                            (p) =>
+                                _buildProductImage(p.imageUrl) == null ? 1 : 2,
+                          )
+                          .toList(),
                       children: _products.map(_buildProductCard).toList(),
                     ),
                   );
@@ -2310,6 +2324,22 @@ class PosScreenState extends State<PosScreen> {
                     child: CustomScrollView(
                       key: const PageStorageKey('pos-cart'),
                       slivers: [
+                        if (_cart.isNotEmpty)
+                          SliverToBoxAdapter(
+                            child: Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: ExportMenu(
+                                path: '/api/cart/export',
+                                label: 'تصدير السلة كمسودة',
+                                body: {
+                                  'items': _cart
+                                      .map((i) => i.toJson())
+                                      .toList(),
+                                  'global_discount': _globalDiscount,
+                                },
+                              ),
+                            ),
+                          ),
                         if (_cart.isEmpty)
                           SliverToBoxAdapter(
                             child: _emptyState(

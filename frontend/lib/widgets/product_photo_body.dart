@@ -1,7 +1,7 @@
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
-/// With 14px card padding and 12px grid spacing, the photo card occupies
+/// With 14px padding, 2px borders and 12px grid spacing, the photo card occupies
 /// exactly two equivalent text-only cards. Measures actual text scaling.
 class ProductPhotoBody extends MultiChildRenderObjectWidget {
   ProductPhotoBody({super.key, required Widget image, required Widget body})
@@ -28,7 +28,9 @@ class _PhotoBody extends RenderBox
       BoxConstraints.tightFor(width: constraints.maxWidth),
       parentUsesSize: true,
     );
-    final photoHeight = body.size.height + 28;
+    final photoHeight = constraints.hasBoundedHeight
+        ? constraints.maxHeight - body.size.height - 12
+        : body.size.height + 32;
     photo.layout(
       BoxConstraints.tightFor(width: constraints.maxWidth, height: photoHeight),
     );

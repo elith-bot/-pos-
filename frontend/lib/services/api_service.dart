@@ -1,5 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'download_stub.dart'
+    if (dart.library.html) 'download_web.dart'
+    as downloads;
 import 'package:http/http.dart' as http;
 import '../models/user_model.dart';
 import '../models/product_model.dart';
@@ -585,6 +588,9 @@ class ApiService {
     String period = 'all',
     String? startDate,
     String? endDate,
+    String? startAt,
+    String? endAt,
+    double? hours,
   }) async {
     try {
       final params = <String, String>{
@@ -593,6 +599,9 @@ class ApiService {
       };
       if (startDate != null) params['start_date'] = startDate;
       if (endDate != null) params['end_date'] = endDate;
+      if (startAt != null) params['start_at'] = startAt;
+      if (endAt != null) params['end_at'] = endAt;
+      if (hours != null) params['hours'] = '$hours';
       final response = await _get(
         Uri.parse('$baseUrl/api/stats').replace(queryParameters: params),
       );
@@ -602,6 +611,28 @@ class ApiService {
       }
     } catch (_) {}
     throw Exception(lastError);
+  }
+
+  static Future<void> exportFile(
+    String path,
+    String format, {
+    Map<String, String>? query,
+    Map<String, dynamic>? body,
+  }) async {
+    final response = await _request(
+      body == null ? 'GET' : 'POST',
+      Uri.parse(
+        '$baseUrl$path',
+      ).replace(queryParameters: {...?query, 'format': format}),
+      headers: {'Content-Type': 'application/json; charset=UTF-8'},
+      body: body == null ? null : jsonEncode(body),
+    );
+    if (response.statusCode != 200) throw Exception(lastError);
+    downloads.saveFile(
+      response.bodyBytes,
+      'pos-${DateTime.now().millisecondsSinceEpoch}.$format',
+      response.headers['content-type'] ?? 'application/octet-stream',
+    );
   }
 
   // --- DATABASE SWITCHER ---

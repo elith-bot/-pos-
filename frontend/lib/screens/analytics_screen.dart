@@ -6,6 +6,7 @@ import '../services/theme_service.dart';
 import '../widgets/section_tabs.dart';
 import '../widgets/sale_details_dialog.dart';
 import '../services/permissions_service.dart';
+import '../widgets/export_menu.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key, this.isActive = true});
@@ -22,6 +23,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   int _mobileSection = 0;
   String period = 'today';
   DateTime? start, end;
+  double hours = 4;
   Map<String, dynamic> data = {};
   final periods = const {
     'today': 'اليوم',
@@ -31,6 +33,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     'year': 'هذه السنة',
     'all': 'كل الفترات',
     'custom': 'مخصصة',
+    'hours': 'ساعات مخصصة',
   };
 
   @override
@@ -78,7 +81,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Future<void> load({bool silent = false}) async {
     if (!appPermissions.canViewGeneralStats) return;
     if (period == 'custom' &&
-        (start == null || end == null || start!.isAfter(end!))) {
+        (start == null || end == null || !start!.isBefore(end!))) {
       setState(() => error = 'اختر تاريخ بداية ونهاية صحيحين للفترة.');
       return;
     }
@@ -86,9 +89,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     if (!silent) setState(() => loading = true);
     try {
       final r = await ApiService.getStats(
-        period: period,
+        period: period == 'custom' ? 'custom_time' : period,
         startDate: start == null ? null : date(start!),
         endDate: end == null ? null : date(end!),
+        startAt: period == 'custom' ? start?.toUtc().toIso8601String() : null,
+        endAt: period == 'custom' ? end?.toUtc().toIso8601String() : null,
+        hours: period == 'hours' ? hours : null,
       );
       if (mounted && version == _loadVersion)
         setState(() {
@@ -115,11 +121,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       lastDate: DateTime.now(),
     );
     if (d != null) {
+      if (!mounted) return;
+      final t = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.fromDateTime(
+          (isStart ? start : end) ?? DateTime.now(),
+        ),
+        builder: (ctx, child) => MediaQuery(
+          data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true),
+          child: child!,
+        ),
+      );
+      if (t == null || !mounted) return;
+      final chosen = DateTime(d.year, d.month, d.day, t.hour, t.minute);
       setState(() {
         if (isStart)
-          start = d;
+          start = chosen;
         else
-          end = d;
+          end = chosen;
       });
       if (start != null && end != null) load();
     }
@@ -589,6 +608,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                               color: AppColors.primaryLight,
                             ),
                           ),
+                          ExportMenu(
+                            path: '/api/reports/export',
+                            label: 'تصدير الفترة المعروضة',
+                            enabled:
+                                !loading && error == null && data.isNotEmpty,
+                            query: Map<String, dynamic>.from(
+                              data['resolved_filter'] ?? {},
+                            ).map((k, v) => MapEntry(k, '$v')),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 16),
@@ -626,18 +654,71 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                     if (p.key != 'custom') {
                                       start = null;
                                       end = null;
+                                    } else {
+                                      final now = DateTime.now();
+                                      start = DateTime(
+                                        now.year,
+                                        now.month,
+                                        now.day,
+                                      );
+                                      end = now;
                                     }
                                   });
-                                  if (p.key != 'custom') load();
+                                  load();
                                 },
                               ),
                             ),
+                            for (final h in [1, 4, 6, 8, 12, 16])
+                              ChoiceChip(
+                                label: Text('آخر $h ساعة'),
+                                selected: period == 'hours' && hours == h,
+                                onSelected: (_) {
+                                  setState(() {
+                                    period = 'hours';
+                                    hours = h.toDouble();
+                                  });
+                                  load();
+                                },
+                              ),
+                            if (period == 'hours')
+                              SizedBox(
+                                width: 170,
+                                child: TextFormField(
+                                  key: ValueKey('hours-$hours'),
+                                  initialValue: '$hours',
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: 'آخر كم ساعة؟',
+                                    helperText: 'Enter للتطبيق',
+                                  ),
+                                  onFieldSubmitted: (value) {
+                                    final n = double.tryParse(value);
+                                    if (n == null ||
+                                        !n.isFinite ||
+                                        n <= 0 ||
+                                        n > 8760) {
+                                      setState(
+                                        () => error =
+                                            'أدخل عدد ساعات أكبر من صفر وحتى 8760.',
+                                      );
+                                      return;
+                                    }
+                                    setState(() => hours = n);
+                                    load();
+                                  },
+                                ),
+                              ),
                             if (period == 'custom')
                               OutlinedButton.icon(
                                 onPressed: () => pick(true),
                                 icon: const Icon(Icons.date_range),
                                 label: Text(
-                                  start == null ? 'من تاريخ' : date(start!),
+                                  start == null
+                                      ? 'من تاريخ ووقت'
+                                      : '${date(start!)} ${start!.hour.toString().padLeft(2, '0')}:${start!.minute.toString().padLeft(2, '0')}',
                                 ),
                               ),
                             if (period == 'custom')
@@ -645,7 +726,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                 onPressed: () => pick(false),
                                 icon: const Icon(Icons.event),
                                 label: Text(
-                                  end == null ? 'إلى تاريخ' : date(end!),
+                                  end == null
+                                      ? 'إلى تاريخ ووقت'
+                                      : '${date(end!)} ${end!.hour.toString().padLeft(2, '0')}:${end!.minute.toString().padLeft(2, '0')}',
                                 ),
                               ),
                           ],
@@ -656,6 +739,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         '${data['start_date'] ?? ''}  —  ${data['end_date'] ?? ''}',
                         style: TextStyle(color: AppColors.textGray),
                       ),
+                      if (period == 'custom' || period == 'hours')
+                        const Text(
+                          'الوقت محلي. البداية مشمولة والنهاية غير مشمولة. التصدير يثبت الفترة الظاهرة عند تحميل النتائج.',
+                        ),
                       const SizedBox(height: 16),
                       if (compact)
                         SectionTabs(

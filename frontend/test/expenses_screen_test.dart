@@ -228,7 +228,9 @@ void main() {
           return response({}, accept ? 200 : 500);
         }
         return response({
-          'expenses': [expense(1, 'فاتورة الكهرباء', 100, 'كهرباء')],
+          'expenses': accept && deletes > 1
+              ? []
+              : [expense(1, 'فاتورة الكهرباء', 100, 'كهرباء')],
         });
       }),
     );

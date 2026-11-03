@@ -1,6 +1,8 @@
 import os
 import random
 from datetime import datetime, timedelta
+from werkzeug.exceptions import BadRequest
+from report_filters import report_window
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -14,6 +16,7 @@ from security import install_security, issue_session, manageable, revoke, failur
 from transactions import create_sale_transaction, save_table_transaction
 from transactions import number
 from hr_finance import install_hr_finance
+from report_exports import install_exports
 
 def create_app(test_config=None):
     app = Flask(__name__)
@@ -143,6 +146,10 @@ def create_app(test_config=None):
             'db_type': app.config['DATABASE_TYPE'],
             'db_connected': db_connected
         })
+
+    @app.errorhandler(BadRequest)
+    def bad_report_request(error):
+        return failure(error.description, 400)
 
     @app.errorhandler(OperationalError)
     def handle_db_error(e):
@@ -480,81 +487,15 @@ def create_app(test_config=None):
         return create_sale_transaction()
 
     def _filter_sales_and_expenses(args):
-        period = (args.get('period') or 'all').lower().strip()
-        start_date_str = args.get('start_date')
-        end_date_str = args.get('end_date')
         try:
-            tz_offset_min = int(args.get('tz_offset', 180))
-        except (ValueError, TypeError):
-            tz_offset_min = 180
-        tz_delta = timedelta(minutes=tz_offset_min)
-
-        local_now = datetime.utcnow() + tz_delta
-        today_date = local_now.date()
-
-        utc_start = None
-        utc_end = None
-        display_start = 'البداية'
-        display_end = 'الآن'
-
-        if period == 'today':
-            local_start = datetime(today_date.year, today_date.month, today_date.day, 0, 0, 0)
-            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
-            utc_start = local_start - tz_delta
-            utc_end = local_end - tz_delta
-            display_start = local_start.strftime('%Y-%m-%d')
-            display_end = local_end.strftime('%Y-%m-%d')
-        elif period == 'yesterday':
-            y_date = today_date - timedelta(days=1)
-            local_start = datetime(y_date.year, y_date.month, y_date.day, 0, 0, 0)
-            local_end = datetime(y_date.year, y_date.month, y_date.day, 23, 59, 59, 999999)
-            utc_start = local_start - tz_delta
-            utc_end = local_end - tz_delta
-            display_start = local_start.strftime('%Y-%m-%d')
-            display_end = local_end.strftime('%Y-%m-%d')
-        elif period == 'week':
-            w_start_date = today_date - timedelta(days=6)
-            local_start = datetime(w_start_date.year, w_start_date.month, w_start_date.day, 0, 0, 0)
-            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
-            utc_start = local_start - tz_delta
-            utc_end = local_end - tz_delta
-            display_start = local_start.strftime('%Y-%m-%d')
-            display_end = local_end.strftime('%Y-%m-%d')
-        elif period == 'month':
-            local_start = datetime(today_date.year, today_date.month, 1, 0, 0, 0)
-            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
-            utc_start = local_start - tz_delta
-            utc_end = local_end - tz_delta
-            display_start = local_start.strftime('%Y-%m-%d')
-            display_end = local_end.strftime('%Y-%m-%d')
-        elif period == 'year':
-            local_start = datetime(today_date.year, 1, 1, 0, 0, 0)
-            local_end = datetime(today_date.year, today_date.month, today_date.day, 23, 59, 59, 999999)
-            utc_start = local_start - tz_delta
-            utc_end = local_end - tz_delta
-            display_start = local_start.strftime('%Y-%m-%d')
-            display_end = local_end.strftime('%Y-%m-%d')
-        elif period == 'custom':
-            try:
-                s_d = datetime.strptime(start_date_str, '%Y-%m-%d').date() if start_date_str else today_date
-                e_d = datetime.strptime(end_date_str, '%Y-%m-%d').date() if end_date_str else today_date
-                if s_d > e_d:
-                    s_d, e_d = e_d, s_d
-                local_start = datetime(s_d.year, s_d.month, s_d.day, 0, 0, 0)
-                local_end = datetime(e_d.year, e_d.month, e_d.day, 23, 59, 59, 999999)
-                utc_start = local_start - tz_delta
-                utc_end = local_end - tz_delta
-                display_start = local_start.strftime('%Y-%m-%d')
-                display_end = local_end.strftime('%Y-%m-%d')
-            except Exception:
-                pass
-        else:
-            period = 'all'
+            period, display_start, display_end, utc_start, utc_end, tz_delta, resolved = report_window(args)
+        except (ValueError, TypeError, KeyError) as error:
+            raise BadRequest(str(error))
 
         # Filter Sales
         sales_q = Sale.query
         if utc_start and utc_end:
-            sales_q = sales_q.filter(Sale.created_at >= utc_start, Sale.created_at <= utc_end)
+            sales_q = sales_q.filter(Sale.created_at >= utc_start, Sale.created_at < utc_end)
 
         payment_method = args.get('payment_method')
         if payment_method and payment_method != 'all':
@@ -579,14 +520,14 @@ def create_app(test_config=None):
         # Filter Expenses
         exp_q = Expense.query
         if utc_start and utc_end:
-            exp_q = exp_q.filter(Expense.created_at >= utc_start, Expense.created_at <= utc_end)
+            exp_q = exp_q.filter(Expense.created_at >= utc_start, Expense.created_at < utc_end)
         all_expenses = exp_q.order_by(Expense.id.desc()).all()
 
-        return period, display_start, display_end, all_sales, all_expenses, tz_delta
+        return period, display_start, display_end, all_sales, all_expenses, tz_delta, resolved
 
     @app.route('/api/sales', methods=['GET'])
     def get_sales():
-        period, display_start, display_end, all_sales, all_expenses, tz_delta = _filter_sales_and_expenses(request.args)
+        period, display_start, display_end, all_sales, all_expenses, tz_delta, resolved = _filter_sales_and_expenses(request.args)
         sales_dicts = []
         for s in all_sales:
             d = s.to_dict()
@@ -724,7 +665,7 @@ def create_app(test_config=None):
     # ================= ANALYTICS APIs =================
     @app.route('/api/stats', methods=['GET'])
     def get_stats():
-        period, display_start, display_end, all_sales, all_expenses, tz_delta = _filter_sales_and_expenses(request.args)
+        period, display_start, display_end, all_sales, all_expenses, tz_delta, resolved = _filter_sales_and_expenses(request.args)
 
         total_sales_count = len(all_sales)
         gross_sales = sum(s.total_selling_amount for s in all_sales)
@@ -792,11 +733,11 @@ def create_app(test_config=None):
                         timeline_buckets[lbl]['revenue'] += (s.total_selling_amount - s.total_discount)
                         timeline_buckets[lbl]['profit'] += s.net_profit
                         timeline_buckets[lbl]['orders'] += 1
-        elif period in ['week', 'month', 'custom']:
+        elif period in ['week', 'month', 'custom', 'hours', 'custom_time']:
             for s in all_sales:
                 if s.created_at:
                     local_t = s.created_at + tz_delta
-                    lbl = local_t.strftime('%Y-%m-%d')
+                    lbl = local_t.strftime('%Y-%m-%d %H:00' if period in ['hours', 'custom_time'] and (datetime.fromisoformat(resolved['end_at'].replace('Z', '+00:00')) - datetime.fromisoformat(resolved['start_at'].replace('Z', '+00:00'))).total_seconds() <= 172800 else '%Y-%m-%d')
                     if lbl not in timeline_buckets:
                         timeline_buckets[lbl] = {'label': lbl, 'revenue': 0.0, 'profit': 0.0, 'orders': 0}
                     timeline_buckets[lbl]['revenue'] += (s.total_selling_amount - s.total_discount)
@@ -834,6 +775,7 @@ def create_app(test_config=None):
         return jsonify({
             'status': 'success',
             'period': period,
+            'resolved_filter': resolved,
             'start_date': display_start,
             'end_date': display_end,
             'stats': {
@@ -860,6 +802,7 @@ def create_app(test_config=None):
                 'total_products': total_products_count
             },
             'payment_methods': {k: {'amount': round(v['amount'], 2), 'count': v['count']} for k, v in pm_dict.items()},
+            'expenses': [dict(e.to_dict(), created_at=(e.created_at + tz_delta).strftime('%Y-%m-%d %H:%M:%S')) for e in all_expenses],
             'expense_categories': {k: round(v, 2) for k, v in expense_categories.items()},
             'legacy_inventory_expenses': sum(1 for e in inventory_expenses if e.source != 'inventory'),
             'top_products': top_products,
@@ -907,6 +850,7 @@ def create_app(test_config=None):
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
+    install_exports(app, get_stats)
     return app
 
 if __name__ == '__main__':
