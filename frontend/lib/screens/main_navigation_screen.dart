@@ -2,152 +2,240 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
+import '../services/permissions_service.dart';
 import '../services/theme_service.dart';
 import 'pos_screen.dart';
-
 import 'expenses_screen.dart';
 import 'analytics_screen.dart';
 import 'employees_screen.dart';
 import 'settings_screen.dart';
 import 'auth_screen.dart';
+import 'hr_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
-
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  final Set<int> _visitedTabs = {0};
-
+class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  final _posKey = GlobalKey<PosScreenState>();
+  final Set<int> _visited = {0};
+  int _selected = 0;
+  bool _navigating = false;
+  late final List<(String, IconData, Widget)> _pages;
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
-    _tabController.addListener(_onTabChanged);
-    ThemeService.themeModeNotifier.addListener(_onThemeChanged);
+    _pages = [
+      ('المبيعات والطاولات', Icons.point_of_sale, PosScreen(key: _posKey)),
+      if (appPermissions.canManageExpenses)
+        (
+          'المصاريف',
+          Icons.account_balance_wallet_outlined,
+          const ExpensesScreen(),
+        ),
+      if (appPermissions.canViewGeneralStats)
+        ('الإحصائيات', Icons.bar_chart, const AnalyticsScreen()),
+      if (appPermissions.canManageEmployees)
+        ('الموظفون', Icons.badge_outlined, const EmployeesScreen()),
+      ('الإعدادات', Icons.settings_outlined, const SettingsScreen()),
+    ];
+    ThemeService.themeModeNotifier.addListener(_themeChanged);
+    ApiService.onSessionExpired = _expired;
   }
 
-  void _onThemeChanged() {
+  void _themeChanged() {
     if (mounted) setState(() {});
   }
 
-  void _onTabChanged() {
-    if (_tabController.indexIsChanging) return;
-    final index = _tabController.index;
-    if (_visitedTabs.add(index) && mounted) setState(() {});
+  void _expired() async {
+    await SessionService.clearSession();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('انتهت الجلسة أو تغيرت صلاحياتك. سجل الدخول مجدداً.'),
+      ),
+    );
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const AuthScreen()),
+      (_) => false,
+    );
   }
 
   @override
   void dispose() {
-    ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
-    _tabController.removeListener(_onTabChanged);
-    _tabController.dispose();
+    ThemeService.themeModeNotifier.removeListener(_themeChanged);
+    ApiService.onSessionExpired = null;
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final currentUser = ApiService.currentUser;
+  Future<void> _select(int index) async {
+    if (_navigating || index == _selected) return;
+    _navigating = true;
+    final saved = await _posKey.currentState?.prepareToLeave() ?? true;
+    _navigating = false;
+    if (!mounted || !saved) return;
+    setState(() {
+      _selected = index;
+      _visited.add(index);
+    });
+  }
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.surface,
-        elevation: 1,
-        title: Row(
-          children: [
-            Icon(Icons.point_of_sale, color: AppColors.primaryLight, size: 26),
-            const SizedBox(width: 10),
-            Text(
-              'نظام الكاشير والمبيعات المتكامل',
-              style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: AppSizes.fontXLarge),
-            ),
-            const SizedBox(width: 16),
-            if (currentUser != null)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryLight.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.primaryLight),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.person, size: 14, color: AppColors.primaryLight),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${currentUser.fullName} (${currentUser.roleArabic})',
-                      style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-              ),
-          ],
+  Future<void> _logout() async {
+    if (_navigating) return;
+    if (!(await _posKey.currentState?.prepareToLeave() ?? true) || !mounted)
+      return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تسجيل الخروج؟'),
+        content: const Text(
+          'طلبات الطاولات محفوظة. سلة البيع المباشر غير المكتملة ستُترك عند تسجيل الخروج.',
         ),
         actions: [
-          ValueListenableBuilder<ThemeMode>(
-            valueListenable: ThemeService.themeModeNotifier,
-            builder: (context, mode, _) {
-              final isDark = mode == ThemeMode.dark;
-              return Tooltip(
-                message: isDark ? 'التحويل للوضع النهاري (Light Mode)' : 'التحويل للوضع الليلي (Dark Mode)',
-                child: IconButton(
-                  icon: Icon(
-                    isDark ? Icons.light_mode : Icons.dark_mode_outlined,
-                    color: isDark ? const Color(0xFFFBBF24) : AppColors.primaryLight,
-                    size: 22,
-                  ),
-                  onPressed: () {
-                    ThemeService.toggleTheme();
-                  },
-                ),
-              );
-            },
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: AppColors.danger),
-            tooltip: 'تسجيل الخروج',
-            onPressed: () async {
-              await SessionService.clearSession();
-              ApiService.currentUser = null;
-              if (context.mounted) {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AuthScreen()),
-                );
-              }
-            },
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('تسجيل الخروج'),
           ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: AppColors.primaryLight,
-          indicatorWeight: 3,
-          labelColor: AppColors.primaryLight,
-          unselectedLabelColor: AppColors.textGray,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: AppSizes.fontLarge),
-          tabs: const [
-            Tab(icon: Icon(Icons.grid_view), text: 'الرئيسية (المنتجات والطلبات)'),
-            Tab(icon: Icon(Icons.account_balance_wallet), text: 'الصرفيات'),
-            Tab(icon: Icon(Icons.bar_chart), text: 'الإحصائيات'),
-            Tab(icon: Icon(Icons.badge), text: 'الموظفين'),
-            Tab(icon: Icon(Icons.settings), text: 'الإعدادات'),
-          ],
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _visitedTabs.contains(0) ? const PosScreen() : const SizedBox.shrink(),
-          _visitedTabs.contains(1) ? const ExpensesScreen() : const SizedBox.shrink(),
-          _visitedTabs.contains(2) ? const AnalyticsScreen() : const SizedBox.shrink(),
-          _visitedTabs.contains(3) ? const EmployeesScreen() : const SizedBox.shrink(),
-          _visitedTabs.contains(4) ? const SettingsScreen() : const SizedBox.shrink(),
         ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+    await ApiService.logout();
+    await SessionService.clearSession();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const AuthScreen()),
+      (_) => false,
+    );
   }
+
+  @override
+  Widget build(BuildContext context) => Directionality(
+    textDirection: TextDirection.rtl,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 700;
+        return Scaffold(
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  compact ? _pages[_selected].$1 : 'نظام الكاشير والمبيعات',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 17 : 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  '${ApiService.currentUser?.fullName ?? ''} • ${ApiService.currentUser?.roleArabic ?? ''}',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              IconButton(
+                tooltip: 'عقدي وشروط العمل',
+                icon: const Icon(Icons.description_outlined),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const MyContractScreen()),
+                ),
+              ),
+              IconButton(
+                tooltip: 'تبديل المظهر',
+                onPressed: ThemeService.toggleTheme,
+                icon: Icon(
+                  ThemeService.isDark
+                      ? Icons.light_mode
+                      : Icons.dark_mode_outlined,
+                ),
+              ),
+              IconButton(
+                tooltip: 'تسجيل الخروج',
+                onPressed: _logout,
+                icon: const Icon(Icons.logout),
+              ),
+            ],
+            bottom: compact
+                ? null
+                : PreferredSize(
+                    preferredSize: const Size.fromHeight(58),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < _pages.length; i++)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 8,
+                              ),
+                              child: TextButton.icon(
+                                style: TextButton.styleFrom(
+                                  backgroundColor: i == _selected
+                                      ? AppColors.primaryLight.withValues(
+                                          alpha: .12,
+                                        )
+                                      : Colors.transparent,
+                                ),
+                                onPressed: () => _select(i),
+                                icon: Icon(_pages[i].$2),
+                                label: Text(_pages[i].$1),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+          bottomNavigationBar: compact
+              ? NavigationBar(
+                  selectedIndex: _selected,
+                  onDestinationSelected: _select,
+                  height: 68,
+                  backgroundColor: AppColors.surface,
+                  indicatorColor: AppColors.primaryLight.withValues(alpha: .12),
+                  labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                  destinations: [
+                    for (var i = 0; i < _pages.length; i++)
+                      NavigationDestination(
+                        icon: Icon(_pages[i].$2),
+                        label: i == 0 ? 'المبيعات' : _pages[i].$1,
+                      ),
+                  ],
+                )
+              : null,
+          body: IndexedStack(
+            index: _selected,
+            children: [
+              for (var i = 0; i < _pages.length; i++)
+                TickerMode(
+                  enabled: i == _selected,
+                  child: _visited.contains(i)
+                      ? (_pages[i].$3 is AnalyticsScreen
+                            ? AnalyticsScreen(isActive: i == _selected)
+                            : _pages[i].$3)
+                      : const SizedBox.shrink(),
+                ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
 }

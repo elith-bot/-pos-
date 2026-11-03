@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/user_model.dart';
 import '../models/product_model.dart';
@@ -6,14 +7,138 @@ import '../models/cart_item_model.dart';
 import '../models/restock_history_model.dart';
 
 class ApiService {
+  static final reportsRevision = ValueNotifier<int>(0);
   static String baseUrl = 'http://127.0.0.1:5000';
   static UserModel? currentUser;
-
-  static Future<Map<String, dynamic>> checkHealth() async {
+  static String? authToken;
+  static String lastError = 'تعذر تنفيذ العملية. تحقق من الاتصال وحاول مجدداً.';
+  static void Function()? onSessionExpired;
+  static Future<http.Response> _request(
+    String method,
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) async {
+    final client = http.Client();
+    final sentToken = url.origin == Uri.parse(baseUrl).origin
+        ? authToken
+        : null;
     try {
-      final response = await http
-          .get(Uri.parse('$baseUrl/api/health'))
-          .timeout(const Duration(seconds: 5));
+      final request = http.Request(method, url);
+      request.headers.addAll({
+        ...?headers,
+        if (sentToken != null) 'Authorization': 'Bearer $sentToken',
+      });
+      if (body != null) request.body = body as String;
+      final response = await http.Response.fromStream(
+        await client.send(request),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode >= 400) {
+        try {
+          lastError =
+              jsonDecode(utf8.decode(response.bodyBytes))['message'] ??
+              'تعذر تنفيذ العملية';
+        } catch (_) {
+          lastError = 'تعذر تنفيذ العملية';
+        }
+        if (response.statusCode == 401 &&
+            sentToken != null &&
+            sentToken == authToken) {
+          authToken = null;
+          currentUser = null;
+          onSessionExpired?.call();
+        }
+      }
+      if (response.statusCode >= 200 &&
+          response.statusCode < 300 &&
+          method != 'GET' &&
+          (url.path == '/api/sales' ||
+              url.path == '/api/expenses' ||
+              url.path.startsWith('/api/expenses/') ||
+              url.path.startsWith('/api/hr/') ||
+              url.path.startsWith('/api/fixed-expenses') ||
+              url.path.endsWith('/restock') ||
+              url.path == '/api/switch-db')) {
+        reportsRevision.value++;
+      }
+      return response;
+    } catch (_) {
+      lastError = 'لم يتم تأكيد العملية. تحقق من الاتصال ثم أعد المحاولة.';
+      rethrow;
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<http.Response> _get(Uri url, {Map<String, String>? headers}) =>
+      _request('GET', url, headers: headers);
+  static Future<http.Response> _post(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) => _request('POST', url, headers: headers, body: body);
+  static Future<http.Response> _put(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) => _request('PUT', url, headers: headers, body: body);
+  static Future<http.Response> _delete(
+    Uri url, {
+    Map<String, String>? headers,
+  }) => _request('DELETE', url, headers: headers);
+  static Future<UserModel?> validateSession() async {
+    if (authToken == null) return null;
+    try {
+      final r = await _get(Uri.parse('$baseUrl/api/auth/me'));
+      if (r.statusCode == 200) {
+        currentUser = UserModel.fromJson(
+          jsonDecode(utf8.decode(r.bodyBytes))['user'],
+        );
+        return currentUser;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> logout() async {
+    try {
+      await _post(Uri.parse('$baseUrl/api/auth/logout'));
+    } catch (_) {}
+    authToken = null;
+    currentUser = null;
+  }
+
+  static Future<bool> resetEmployeePassword(int id, String password) async {
+    try {
+      final r = await _put(
+        Uri.parse('$baseUrl/api/users/$id/password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'new_password': password}),
+      );
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> changePassword(String current, String next) async {
+    try {
+      final r = await _post(
+        Uri.parse('$baseUrl/api/auth/password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'current_password': current, 'new_password': next}),
+      );
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>> checkHealth({String? url}) async {
+    try {
+      final response = await _get(
+        Uri.parse('${url ?? baseUrl}/api/health'),
+      ).timeout(const Duration(seconds: 5));
       if (response.statusCode == 200) {
         return json.decode(utf8.decode(response.bodyBytes));
       }
@@ -27,7 +152,7 @@ class ApiService {
     String password,
   ) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/auth/login'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({'username': username, 'password': password}),
@@ -35,6 +160,7 @@ class ApiService {
       final data = json.decode(utf8.decode(response.bodyBytes));
       if (response.statusCode == 200 && data['user'] != null) {
         currentUser = UserModel.fromJson(data['user']);
+        authToken = data['token'];
       }
       return data;
     } catch (e) {
@@ -48,7 +174,7 @@ class ApiService {
     String fullName,
   ) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/auth/register'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({
@@ -65,7 +191,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> requestOtp(String username) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/auth/request-otp'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({'username': username}),
@@ -82,7 +208,7 @@ class ApiService {
     String newPassword,
   ) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/auth/reset-password'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({
@@ -100,7 +226,7 @@ class ApiService {
   // --- USERS / EMPLOYEES ---
   static Future<List<UserModel>> getUsers() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/users'));
+      final response = await _get(Uri.parse('$baseUrl/api/users'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['users'] != null) {
@@ -110,12 +236,12 @@ class ApiService {
         }
       }
     } catch (_) {}
-    return [];
+    throw Exception(lastError);
   }
 
   static Future<bool> updateUserRole(int userId, String newRole) async {
     try {
-      final response = await http.put(
+      final response = await _put(
         Uri.parse('$baseUrl/api/users/$userId/role'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({'role': newRole}),
@@ -128,7 +254,7 @@ class ApiService {
 
   static Future<bool> toggleUserActive(int userId) async {
     try {
-      final response = await http.put(
+      final response = await _put(
         Uri.parse('$baseUrl/api/users/$userId/toggle-active'),
       );
       return response.statusCode == 200;
@@ -145,12 +271,13 @@ class ApiService {
     int? minStock,
   }) async {
     try {
-      String query = '$baseUrl/api/products?search=$search';
+      String query =
+          '$baseUrl/api/products?search=${Uri.encodeQueryComponent(search)}';
       if (minPrice != null) query += '&min_price=$minPrice';
       if (maxPrice != null) query += '&max_price=$maxPrice';
       if (minStock != null) query += '&min_stock=$minStock';
 
-      final response = await http.get(Uri.parse(query));
+      final response = await _get(Uri.parse(query));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['products'] != null) {
@@ -165,8 +292,10 @@ class ApiService {
 
   static Future<ProductModel?> getProductByBarcode(String barcode) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/products/barcode/$barcode'),
+      final response = await _get(
+        Uri.parse(
+          '$baseUrl/api/products/barcode/${Uri.encodeComponent(barcode)}',
+        ),
       );
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
@@ -180,7 +309,7 @@ class ApiService {
 
   static Future<bool> addProduct(Map<String, dynamic> productData) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/products'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode(productData),
@@ -196,7 +325,7 @@ class ApiService {
     Map<String, dynamic> productData,
   ) async {
     try {
-      final response = await http.put(
+      final response = await _put(
         Uri.parse('$baseUrl/api/products/$id'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode(productData),
@@ -221,7 +350,7 @@ class ApiService {
       if (sellingPrice != null) {
         bodyData['selling_price'] = sellingPrice;
       }
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/products/$id/restock'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode(bodyData),
@@ -236,7 +365,7 @@ class ApiService {
     int productId,
   ) async {
     try {
-      final response = await http.get(
+      final response = await _get(
         Uri.parse('$baseUrl/api/products/$productId/restock-history'),
       );
       if (response.statusCode == 200) {
@@ -253,9 +382,7 @@ class ApiService {
 
   static Future<bool> deleteProduct(int id) async {
     try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/api/products/$id'),
-      );
+      final response = await _delete(Uri.parse('$baseUrl/api/products/$id'));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -265,7 +392,7 @@ class ApiService {
   // --- TABLES ---
   static Future<List<Map<String, dynamic>>> getTables() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/tables'));
+      final response = await _get(Uri.parse('$baseUrl/api/tables'));
       if (response.statusCode == 200) {
         final data = json.decode(utf8.decode(response.bodyBytes));
         if (data['tables'] != null) {
@@ -278,7 +405,7 @@ class ApiService {
 
   static Future<bool> createTables(int count) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/tables'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({'count': count}),
@@ -291,9 +418,7 @@ class ApiService {
 
   static Future<bool> deleteTable(int tableId) async {
     try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/api/tables/$tableId'),
-      );
+      final response = await _delete(Uri.parse('$baseUrl/api/tables/$tableId'));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -302,7 +427,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>?> getTableOrder(int tableId) async {
     try {
-      final response = await http.get(
+      final response = await _get(
         Uri.parse('$baseUrl/api/tables/$tableId/order'),
       );
       if (response.statusCode == 200) {
@@ -314,14 +439,16 @@ class ApiService {
 
   static Future<bool> saveTableOrder(
     int tableId,
-    List<CartItemModel> cartItems,
-  ) async {
+    List<CartItemModel> cartItems, {
+    double globalDiscount = 0,
+  }) async {
     try {
       final body = {
+        'global_discount': globalDiscount,
         'cashier_id': currentUser?.id,
         'items': cartItems.map((item) => item.toJson()).toList(),
       };
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/tables/$tableId/order'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode(body),
@@ -338,6 +465,7 @@ class ApiService {
     String paymentMethod,
     double globalDiscount, {
     int? tableId,
+    required String checkoutKey,
   }) async {
     try {
       final body = {
@@ -346,9 +474,10 @@ class ApiService {
         'payment_method': paymentMethod,
         'global_discount': globalDiscount,
         'table_id': tableId,
+        'checkout_key': checkoutKey,
         'items': cartItems.map((item) => item.toJson()).toList(),
       };
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/sales'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode(body),
@@ -371,7 +500,7 @@ class ApiService {
       };
       if (startDate != null) params['start_date'] = startDate;
       if (endDate != null) params['end_date'] = endDate;
-      final response = await http.get(
+      final response = await _get(
         Uri.parse('$baseUrl/api/sales').replace(queryParameters: params),
       );
       if (response.statusCode == 200) {
@@ -387,12 +516,16 @@ class ApiService {
   // --- EXPENSES ---
   static Future<Map<String, dynamic>> getExpenses() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/expenses'));
+      final response = await _get(
+        Uri.parse('$baseUrl/api/expenses'),
+      ).timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
         return json.decode(utf8.decode(response.bodyBytes));
       }
     } catch (_) {}
-    return {'expenses': [], 'total_amount': 0.0};
+    throw Exception(
+      'تعذر تحميل المصاريف. تحقق من الاتصال بالسيرفر وحاول مجدداً.',
+    );
   }
 
   static Future<bool> addExpense(
@@ -402,7 +535,7 @@ class ApiService {
     String notes,
   ) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/expenses'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({
@@ -421,9 +554,7 @@ class ApiService {
 
   static Future<bool> deleteExpense(int id) async {
     try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/api/expenses/$id'),
-      );
+      final response = await _delete(Uri.parse('$baseUrl/api/expenses/$id'));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -431,6 +562,25 @@ class ApiService {
   }
 
   // --- STATS ---
+  static Future<Map<String, dynamic>> businessRequest(
+    String path, {
+    String method = 'GET',
+    Map<String, dynamic>? body,
+    Map<String, String>? query,
+  }) async {
+    final response = await _request(
+      method,
+      Uri.parse('$baseUrl$path').replace(queryParameters: query),
+      headers: {'Content-Type': 'application/json; charset=UTF-8'},
+      body: body == null ? null : jsonEncode(body),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300)
+      throw Exception(lastError);
+    return Map<String, dynamic>.from(
+      jsonDecode(utf8.decode(response.bodyBytes)),
+    );
+  }
+
   static Future<Map<String, dynamic>> getStats({
     String period = 'all',
     String? startDate,
@@ -443,7 +593,7 @@ class ApiService {
       };
       if (startDate != null) params['start_date'] = startDate;
       if (endDate != null) params['end_date'] = endDate;
-      final response = await http.get(
+      final response = await _get(
         Uri.parse('$baseUrl/api/stats').replace(queryParameters: params),
       );
       if (response.statusCode == 200) {
@@ -451,13 +601,13 @@ class ApiService {
         return Map<String, dynamic>.from(data);
       }
     } catch (_) {}
-    return {};
+    throw Exception(lastError);
   }
 
   // --- DATABASE SWITCHER ---
   static Future<bool> switchDatabase(String dbType) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('$baseUrl/api/switch-db'),
         headers: {'Content-Type': 'application/json; charset=UTF-8'},
         body: json.encode({'db_type': dbType}),

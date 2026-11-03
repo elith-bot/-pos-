@@ -1,16 +1,25 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../services/api_service.dart';
 import '../services/theme_service.dart';
+import '../widgets/section_tabs.dart';
+import '../widgets/sale_details_dialog.dart';
+import '../services/permissions_service.dart';
 
 class AnalyticsScreen extends StatefulWidget {
-  const AnalyticsScreen({super.key});
+  const AnalyticsScreen({super.key, this.isActive = true});
+  final bool isActive;
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
 }
 
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
+  Timer? _refreshTimer;
   bool loading = true;
+  String? error;
+  int _loadVersion = 0;
+  int _mobileSection = 0;
   String period = 'today';
   DateTime? start, end;
   Map<String, dynamic> data = {};
@@ -28,7 +37,31 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   void initState() {
     super.initState();
     ThemeService.themeModeNotifier.addListener(themeChanged);
-    load();
+    ApiService.reportsRevision.addListener(_reportsChanged);
+    if (widget.isActive) load();
+    _configureRefresh();
+  }
+
+  @override
+  void didUpdateWidget(covariant AnalyticsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive != oldWidget.isActive) {
+      _configureRefresh();
+      if (widget.isActive) load(silent: data.isNotEmpty);
+    }
+  }
+
+  void _configureRefresh() {
+    _refreshTimer?.cancel();
+    if (widget.isActive && appPermissions.canViewGeneralStats) {
+      _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (!loading) load(silent: true);
+      });
+    }
+  }
+
+  void _reportsChanged() {
+    if (widget.isActive) load(silent: true);
   }
 
   void themeChanged() {
@@ -42,18 +75,34 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return '${n.round()} د.ع';
   }
 
-  Future<void> load() async {
-    setState(() => loading = true);
-    final r = await ApiService.getStats(
-      period: period,
-      startDate: start == null ? null : date(start!),
-      endDate: end == null ? null : date(end!),
-    );
-    if (mounted)
-      setState(() {
-        data = r;
-        loading = false;
-      });
+  Future<void> load({bool silent = false}) async {
+    if (!appPermissions.canViewGeneralStats) return;
+    if (period == 'custom' &&
+        (start == null || end == null || start!.isAfter(end!))) {
+      setState(() => error = 'اختر تاريخ بداية ونهاية صحيحين للفترة.');
+      return;
+    }
+    final version = ++_loadVersion;
+    if (!silent) setState(() => loading = true);
+    try {
+      final r = await ApiService.getStats(
+        period: period,
+        startDate: start == null ? null : date(start!),
+        endDate: end == null ? null : date(end!),
+      );
+      if (mounted && version == _loadVersion)
+        setState(() {
+          error = null;
+          data = r;
+          loading = false;
+        });
+    } catch (_) {
+      if (mounted && version == _loadVersion)
+        setState(() {
+          loading = false;
+          error = ApiService.lastError;
+        });
+    }
   }
 
   Future<void> pick(bool isStart) async {
@@ -137,12 +186,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           children: [
             Icon(icon, color: AppColors.primaryLight),
             const SizedBox(width: 8),
-            Text(
-              title,
-              style: TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -252,18 +303,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     Map<String, dynamic> product,
     List<Map<String, dynamic>> sales,
   ) {
+    if (!appPermissions.canViewGeneralStats) return;
     final name = '${product['product_name']}';
     final quantity = (product['quantity'] as num?)?.toDouble() ?? 0;
     final revenue = (product['total_revenue'] as num?)?.toDouble() ?? 0;
     final profit = (product['total_profit'] as num?)?.toDouble() ?? 0;
     final allRevenue =
-        List<Map<String, dynamic>>.from(
-          data['top_products'] ?? const [],
-        ).fold<double>(
-          0,
-          (sum, item) =>
-              sum + ((item['total_revenue'] as num?)?.toDouble() ?? 0),
-        );
+        (data['stats']?['total_revenue'] as num?)?.toDouble() ?? 0;
     final productSales = sales
         .where(
           (sale) => List<Map<String, dynamic>>.from(
@@ -314,12 +360,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         Icons.payments,
                         AppColors.success,
                       ),
-                      _detailBox(
-                        'إجمالي الربح',
-                        money(profit),
-                        Icons.trending_up,
-                        AppColors.warning,
-                      ),
+                      if (appPermissions.canViewProfit)
+                        _detailBox(
+                          'إجمالي الربح',
+                          money(profit),
+                          Icons.trending_up,
+                          AppColors.warning,
+                        ),
                       _detailBox(
                         'عدد الطلبات',
                         '${productSales.length}',
@@ -355,33 +402,31 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       'لا توجد طلبات ضمن الفترة الحالية',
                       style: TextStyle(color: AppColors.textGray),
                     ),
-                  ...productSales
-                      .take(20)
-                      .map(
-                        (sale) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(
-                            Icons.receipt_long,
-                            color: AppColors.historyIcon,
-                          ),
-                          title: Text(
-                            'طلب #${sale['id']} • ${sale['created_at']}',
-                            style: TextStyle(color: AppColors.textPrimary),
-                          ),
-                          subtitle: Text(
-                            'الكاشير: ${sale['cashier_name']} • الدفع: ${sale['payment_method']}',
-                            style: TextStyle(color: AppColors.textGray),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.open_in_new),
-                            color: AppColors.primaryLight,
-                            onPressed: () {
-                              Navigator.pop(context);
-                              saleDetails(sale);
-                            },
-                          ),
-                        ),
+                  ...productSales.map(
+                    (sale) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        Icons.receipt_long,
+                        color: AppColors.historyIcon,
                       ),
+                      title: Text(
+                        'طلب #${sale['id']} • ${sale['created_at']}',
+                        style: TextStyle(color: AppColors.textPrimary),
+                      ),
+                      subtitle: Text(
+                        'الكاشير: ${sale['cashier_name']} • الدفع: ${sale['payment_method']}',
+                        style: TextStyle(color: AppColors.textGray),
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.open_in_new),
+                        color: AppColors.primaryLight,
+                        onPressed: () {
+                          Navigator.pop(context);
+                          saleDetails(sale);
+                        },
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -476,101 +521,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  void saleDetails(Map<String, dynamic> s) {
-    final items = List<Map<String, dynamic>>.from(s['items'] ?? const []);
+  void saleDetails(Map<String, dynamic> sale) {
+    if (!appPermissions.canViewGeneralStats) return;
+    final stats = Map<String, dynamic>.from(data['stats'] ?? {});
     showDialog(
       context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          backgroundColor: AppColors.surface,
-          title: Text(
-            'تفاصيل الطلب #${s['id']}',
-            style: TextStyle(color: AppColors.textPrimary),
-          ),
-          content: SizedBox(
-            width: 550,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${s['created_at']} • ${s['cashier_name']}',
-                    style: TextStyle(color: AppColors.textGray),
-                  ),
-                  const Divider(),
-                  ...items.map(
-                    (i) => Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.background,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${i['product_name']}',
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 18,
-                            runSpacing: 7,
-                            children: [
-                              Text(
-                                'الكمية: ${i['quantity']}',
-                                style: TextStyle(color: AppColors.textGray),
-                              ),
-                              Text(
-                                'شراء: ${money(i['unit_purchase_price'])}',
-                                style: TextStyle(color: AppColors.textGray),
-                              ),
-                              Text(
-                                'بيع: ${money(i['unit_selling_price'])}',
-                                style: TextStyle(color: AppColors.primaryLight),
-                              ),
-                              Text(
-                                'الخصم: ${money(i['discount'])}',
-                                style: TextStyle(color: AppColors.warning),
-                              ),
-                              Text(
-                                'الإجمالي: ${money(i['total_price'])}',
-                                style: TextStyle(
-                                  color: AppColors.success,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                'الربح: ${money(i['profit'])}',
-                                style: TextStyle(
-                                  color: AppColors.historyIcon,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+      builder: (_) => SaleDetailsDialog(
+        sale: sale,
+        periodRevenue: (stats['total_revenue'] as num?)?.toDouble(),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!appPermissions.canViewGeneralStats) {
+      return const Center(child: Text('هذه الصفحة متاحة للإدارة فقط.'));
+    }
+    final compact = MediaQuery.sizeOf(context).width < 700;
     final stats = Map<String, dynamic>.from(data['stats'] ?? {});
     final sales = List<Map<String, dynamic>>.from(data['sales'] ?? const []);
     return Directionality(
@@ -588,6 +556,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(
+                            error!,
+                            style: const TextStyle(color: AppColors.danger),
+                          ),
+                        ),
                       Row(
                         children: [
                           Icon(
@@ -681,167 +657,305 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         style: TextStyle(color: AppColors.textGray),
                       ),
                       const SizedBox(height: 16),
-                      LayoutBuilder(
-                        builder: (context, c) {
-                          final cols = c.maxWidth > 1100
-                              ? 4
-                              : c.maxWidth > 700
-                              ? 2
-                              : 1;
-                          return GridView.count(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            crossAxisCount: cols,
-                            childAspectRatio: c.maxWidth > 700 ? 2.5 : 3.5,
-                            crossAxisSpacing: 13,
-                            mainAxisSpacing: 13,
+                      if (compact)
+                        SectionTabs(
+                          labels: const [
+                            'الملخص',
+                            'الرسوم والدفع',
+                            'المنتجات والطلبات',
+                          ],
+                          selected: _mobileSection,
+                          onSelected: (value) =>
+                              setState(() => _mobileSection = value),
+                        ),
+                      if (!compact || _mobileSection == 0)
+                        LayoutBuilder(
+                          builder: (context, c) {
+                            final cols = c.maxWidth > 1100
+                                ? 4
+                                : c.maxWidth > 700
+                                ? 2
+                                : 1;
+                            return GridView.count(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              crossAxisCount: cols,
+                              mainAxisExtent:
+                                  140 +
+                                  (MediaQuery.textScalerOf(context).scale(1) -
+                                              1)
+                                          .clamp(0, 2) *
+                                      100,
+                              crossAxisSpacing: 13,
+                              mainAxisSpacing: 13,
+                              children: [
+                                card(
+                                  'صافي الإيرادات',
+                                  money(stats['total_revenue']),
+                                  Icons.payments,
+                                  AppColors.success,
+                                ),
+                                card(
+                                  'الربح قبل المصاريف',
+                                  money(stats['gross_profit']),
+                                  Icons.trending_up,
+                                  AppColors.primaryLight,
+                                ),
+                                card(
+                                  'صافي الربح / الخسارة بعد المصاريف',
+                                  money(stats['final_net_profit']),
+                                  Icons.account_balance,
+                                  AppColors.warning,
+                                ),
+                                card(
+                                  'عدد الطلبات',
+                                  '${stats['total_sales_count'] ?? 0}',
+                                  Icons.receipt_long,
+                                  const Color(0xFFA855F7),
+                                ),
+                                card(
+                                  'متوسط الطلب',
+                                  money(stats['average_order_value']),
+                                  Icons.shopping_basket,
+                                  Colors.teal,
+                                ),
+                                card(
+                                  'هامش الربح',
+                                  '${stats['profit_margin_pct'] ?? 0}%',
+                                  Icons.percent,
+                                  Colors.orange,
+                                ),
+                                card(
+                                  'إجمالي الخصومات',
+                                  money(stats['total_discount']),
+                                  Icons.discount,
+                                  AppColors.danger,
+                                ),
+                                card(
+                                  'الأصناف المباعة',
+                                  '${stats['total_items_sold'] ?? 0}',
+                                  Icons.inventory_2,
+                                  Colors.indigo,
+                                ),
+                                card(
+                                  'إجمالي البيع قبل الخصومات',
+                                  money(stats['gross_sales']),
+                                  Icons.sell_outlined,
+                                  AppColors.primaryLight,
+                                ),
+                                card(
+                                  'كلفة شراء البضاعة المباعة',
+                                  money(stats['total_cost']),
+                                  Icons.inventory_outlined,
+                                  Colors.indigo,
+                                ),
+                                card(
+                                  'المصاريف التشغيلية',
+                                  money(stats['total_expenses']),
+                                  Icons.receipt_long_outlined,
+                                  AppColors.danger,
+                                ),
+                                card(
+                                  'شراء وتوريد المخزون',
+                                  money(stats['total_supply']),
+                                  Icons.local_shipping_outlined,
+                                  Colors.teal,
+                                ),
+                                card(
+                                  'المصاريف والتوريد معاً',
+                                  money(stats['total_outflows']),
+                                  Icons.payments_outlined,
+                                  Colors.orange,
+                                ),
+                                card(
+                                  'البيع ناقص المصاريف والتوريد',
+                                  money(stats['sales_less_outflows']),
+                                  Icons.swap_vert,
+                                  Colors.blueGrey,
+                                ),
+                                card(
+                                  'الربح الصافي الموجب',
+                                  money(stats['profit']),
+                                  Icons.trending_up,
+                                  AppColors.success,
+                                ),
+                                card(
+                                  'الخسارة',
+                                  money(stats['loss']),
+                                  Icons.trending_down,
+                                  AppColors.danger,
+                                ),
+                                card(
+                                  'الرواتب المدفوعة',
+                                  money(stats['salary_expenses']),
+                                  Icons.badge_outlined,
+                                  Colors.indigo,
+                                ),
+                                card(
+                                  'الإيجارات المدفوعة',
+                                  money(stats['rent_expenses']),
+                                  Icons.home_work_outlined,
+                                  Colors.teal,
+                                ),
+                                card(
+                                  'الاشتراكات المدفوعة',
+                                  money(stats['subscription_expenses']),
+                                  Icons.autorenew,
+                                  AppColors.primaryLight,
+                                ),
+                                card(
+                                  'الالتزامات الشهرية المدفوعة',
+                                  money(stats['fixed_expenses']),
+                                  Icons.event_repeat,
+                                  Colors.orange,
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      const SizedBox(height: 16),
+                      if (!compact || _mobileSection == 0)
+                        section(
+                          'تفاصيل المصاريف والحساب',
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              card(
-                                'صافي الإيرادات',
-                                money(stats['total_revenue']),
-                                Icons.payments,
-                                AppColors.success,
+                              const Text(
+                                'الربح قبل المصاريف = صافي البيع − كلفة البضاعة المباعة. الربح بعد المصاريف = الربح قبل المصاريف − المصاريف التشغيلية. التوريد يظهر منفصلاً ولا يُخصم مرة ثانية من الربح.',
                               ),
-                              card(
-                                'أرباح المبيعات',
-                                money(stats['gross_profit']),
-                                Icons.trending_up,
-                                AppColors.primaryLight,
+                              const SizedBox(height: 8),
+                              const Text(
+                                'الرواتب والإيجارات والاشتراكات أجزاء من المصاريف؛ لا تجمعها معها مرة ثانية. الالتزامات المدفوعة قد تشمل الإيجار والاشتراكات. الرواتب والمسودات غير المصروفة لا تدخل المصاريف.',
                               ),
-                              card(
-                                'صافي الربح بعد المصاريف',
-                                money(stats['final_net_profit']),
-                                Icons.account_balance,
-                                AppColors.warning,
-                              ),
-                              card(
-                                'عدد الطلبات',
-                                '${stats['total_sales_count'] ?? 0}',
-                                Icons.receipt_long,
-                                const Color(0xFFA855F7),
-                              ),
-                              card(
-                                'متوسط الطلب',
-                                money(stats['average_order_value']),
-                                Icons.shopping_basket,
-                                Colors.teal,
-                              ),
-                              card(
-                                'هامش الربح',
-                                '${stats['profit_margin_pct'] ?? 0}%',
-                                Icons.percent,
-                                Colors.orange,
-                              ),
-                              card(
-                                'إجمالي الخصومات',
-                                money(stats['total_discount']),
-                                Icons.discount,
-                                AppColors.danger,
-                              ),
-                              card(
-                                'الأصناف المباعة',
-                                '${stats['total_items_sold'] ?? 0}',
-                                Icons.inventory_2,
-                                Colors.indigo,
-                              ),
+                              if ((data['legacy_inventory_expenses'] as num? ??
+                                      0) >
+                                  0)
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Text(
+                                    'توجد سجلات توريد قديمة بالقيم المحفوظة سابقاً. راجع التوريد بالوزن القديم؛ تصحيح وحدة الوزن يطبق على العمليات الجديدة.',
+                                    style: TextStyle(color: AppColors.warning),
+                                  ),
+                                ),
+                              for (final e in Map<String, dynamic>.from(
+                                data['expense_categories'] ?? {},
+                              ).entries)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text('${e.key}: ${money(e.value)}'),
+                                ),
                             ],
-                          );
-                        },
-                      ),
+                          ),
+                          Icons.account_balance_wallet_outlined,
+                        ),
                       const SizedBox(height: 16),
-                      LayoutBuilder(
-                        builder: (context, c) {
-                          final wide = c.maxWidth > 900;
-                          final a = section(
-                            'المبيعات عبر الزمن',
-                            timeline(),
-                            Icons.show_chart,
-                          );
-                          final b = section(
-                            'طرق الدفع',
-                            payments(),
-                            Icons.account_balance_wallet,
-                          );
-                          return wide
-                              ? Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Expanded(flex: 2, child: a),
-                                    const SizedBox(width: 15),
-                                    Expanded(child: b),
-                                  ],
-                                )
-                              : Column(
-                                  children: [a, const SizedBox(height: 15), b],
-                                );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      LayoutBuilder(
-                        builder: (context, c) {
-                          final wide = c.maxWidth > 900;
-                          final a = section(
-                            'الأصناف الأكثر مبيعاً',
-                            topProducts(sales),
-                            Icons.star,
-                          );
-                          final b = section(
-                            'آخر العمليات',
-                            sales.isEmpty
-                                ? Text(
-                                    'لا توجد مبيعات ضمن الفترة',
-                                    style: TextStyle(color: AppColors.textGray),
+                      if (!compact || _mobileSection == 1)
+                        LayoutBuilder(
+                          builder: (context, c) {
+                            final wide = c.maxWidth > 900;
+                            final a = section(
+                              'المبيعات عبر الزمن',
+                              timeline(),
+                              Icons.show_chart,
+                            );
+                            final b = section(
+                              'طرق الدفع',
+                              payments(),
+                              Icons.account_balance_wallet,
+                            );
+                            return wide
+                                ? Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(flex: 2, child: a),
+                                      const SizedBox(width: 15),
+                                      Expanded(child: b),
+                                    ],
                                   )
                                 : Column(
-                                    children: sales
-                                        .take(8)
-                                        .map(
-                                          (s) => ListTile(
-                                            onTap: () => saleDetails(s),
-                                            contentPadding: EdgeInsets.zero,
-                                            leading: Icon(
-                                              Icons.receipt_long,
-                                              color: AppColors.historyIcon,
-                                            ),
-                                            title: Text(
-                                              'طلب #${s['id']} • ${money(s['total_selling_amount'])}',
-                                              style: TextStyle(
-                                                color: AppColors.textPrimary,
-                                                fontWeight: FontWeight.bold,
+                                    children: [
+                                      a,
+                                      const SizedBox(height: 15),
+                                      b,
+                                    ],
+                                  );
+                          },
+                        ),
+                      const SizedBox(height: 16),
+                      if (!compact || _mobileSection == 2)
+                        LayoutBuilder(
+                          builder: (context, c) {
+                            final wide = c.maxWidth > 900;
+                            final a = section(
+                              'الأصناف الأكثر مبيعاً',
+                              topProducts(sales),
+                              Icons.star,
+                            );
+                            final b = section(
+                              'آخر العمليات',
+                              sales.isEmpty
+                                  ? Text(
+                                      'لا توجد مبيعات ضمن الفترة',
+                                      style: TextStyle(
+                                        color: AppColors.textGray,
+                                      ),
+                                    )
+                                  : Column(
+                                      children: sales
+                                          .take(8)
+                                          .map(
+                                            (s) => ListTile(
+                                              onTap: () => saleDetails(s),
+                                              contentPadding: EdgeInsets.zero,
+                                              leading: Icon(
+                                                Icons.receipt_long,
+                                                color: AppColors.historyIcon,
+                                              ),
+                                              title: Text(
+                                                'طلب #${s['id']} • ${money(s['total_selling_amount'])}',
+                                                style: TextStyle(
+                                                  color: AppColors.textPrimary,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              subtitle: Text(
+                                                '${s['created_at']} • ${s['cashier_name']}',
+                                                style: TextStyle(
+                                                  color: AppColors.textGray,
+                                                ),
+                                              ),
+                                              trailing: const Icon(
+                                                Icons.chevron_left,
                                               ),
                                             ),
-                                            subtitle: Text(
-                                              '${s['created_at']} • ${s['cashier_name']}',
-                                              style: TextStyle(
-                                                color: AppColors.textGray,
-                                              ),
-                                            ),
-                                            trailing: const Icon(
-                                              Icons.chevron_left,
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                            Icons.receipt_long,
-                          );
-                          return wide
-                              ? Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Expanded(child: a),
-                                    const SizedBox(width: 15),
-                                    Expanded(child: b),
-                                  ],
-                                )
-                              : Column(
-                                  children: [a, const SizedBox(height: 15), b],
-                                );
-                        },
-                      ),
+                                          )
+                                          .toList(),
+                                    ),
+                              Icons.receipt_long,
+                            );
+                            return wide
+                                ? Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(child: a),
+                                      const SizedBox(width: 15),
+                                      Expanded(child: b),
+                                    ],
+                                  )
+                                : Column(
+                                    children: [
+                                      a,
+                                      const SizedBox(height: 15),
+                                      b,
+                                    ],
+                                  );
+                          },
+                        ),
                       const SizedBox(height: 16),
                       Text(
-                        'التقارير تعتمد على التوقيت المحلي وتُحدّث عند السحب للأسفل أو الضغط على تحديث.',
+                        'الإحصائيات للطلبات المكتملة فقط؛ السلال وطلبات الطاولات المفتوحة لا تُحسب كمبيعات. تتحدث تلقائياً بعد البيع وعند فتح الصفحة وكل 30 ثانية أثناء عرضها.',
                         style: TextStyle(
                           color: AppColors.textGray,
                           fontSize: 12,
@@ -857,6 +971,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   @override
   void dispose() {
+    _refreshTimer?.cancel();
+    ApiService.reportsRevision.removeListener(_reportsChanged);
     ThemeService.themeModeNotifier.removeListener(themeChanged);
     super.dispose();
   }

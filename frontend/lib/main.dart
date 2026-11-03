@@ -12,10 +12,9 @@ import 'screens/main_navigation_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   ThemeService.init();
-  final savedUser = await SessionService.loadSession();
-  if (savedUser != null) {
-    ApiService.currentUser = savedUser;
-  }
+  ApiService.baseUrl = SessionService.serverUrl;
+  ApiService.authToken = SessionService.token;
+  final savedUser = await ApiService.validateSession();
   runApp(MyApp(isLoggedIn: savedUser != null));
 }
 

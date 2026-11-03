@@ -7,18 +7,19 @@ import '../services/theme_service.dart';
 import '../services/file_picker_helper.dart';
 import '../models/product_model.dart';
 import '../models/cart_item_model.dart';
-import '../models/restock_history_model.dart';
 import '../services/api_service.dart';
 import '../services/permissions_service.dart';
+import '../widgets/product_masonry.dart';
+import '../widgets/product_photo_body.dart';
 
 class PosScreen extends StatefulWidget {
   const PosScreen({super.key});
 
   @override
-  State<PosScreen> createState() => _PosScreenState();
+  State<PosScreen> createState() => PosScreenState();
 }
 
-class _PosScreenState extends State<PosScreen> {
+class PosScreenState extends State<PosScreen> {
   double? _customTotalSellingPrice;
   List<ProductModel> _products = [];
   final ValueNotifier<List<CartItemModel>> _cartNotifier = ValueNotifier([]);
@@ -40,9 +41,6 @@ class _PosScreenState extends State<PosScreen> {
   );
   Map<int, double> get _cardQuantities => _cardQuantitiesNotifier.value;
 
-  // Tracks which cart items have expanded details
-  final Set<int> _expandedCartItems = {};
-
   // Controllers map to preserve focus while typing numbers
   final Map<String, TextEditingController> _controllers = {};
 
@@ -53,30 +51,81 @@ class _PosScreenState extends State<PosScreen> {
 
   Timer? _searchDebounce;
   Timer? _saveDebounce;
+  bool _busy = false;
+  String? _checkoutKey;
+  Future<bool> _saveTail = Future.value(true);
+  void _notice(String text) {
+    if (mounted)
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<bool> prepareToLeave() async {
+    if (_busy) return false;
+    _saveDebounce?.cancel();
+    if (_activeTable == null) return true;
+    setState(() => _busy = true);
+    final ok = await _queueSave();
+    if (mounted) setState(() => _busy = false);
+    return ok;
+  }
+
+  Future<bool> _queueSave() {
+    if (_activeTable == null) return Future.value(true);
+    final id = _activeTable!['id'] as int;
+    final items = _cart
+        .map(
+          (i) => CartItemModel(
+            product: i.product,
+            quantity: i.quantity,
+            unitPurchasePrice: i.unitPurchasePrice,
+            unitSellingPrice: i.unitSellingPrice,
+            discount: i.discount,
+          ),
+        )
+        .toList();
+    final discount = _globalDiscount;
+    _saveTail = _saveTail.then((_) async {
+      final ok = await ApiService.saveTableOrder(
+        id,
+        items,
+        globalDiscount: discount,
+      );
+      if (!ok) _notice('لم تُحفظ الطاولة: ${ApiService.lastError}');
+      return ok;
+    });
+    return _saveTail;
+  }
 
   void _debouncedSaveTableOrder() {
     if (_activeTable == null) return;
     if (_saveDebounce?.isActive ?? false) _saveDebounce!.cancel();
     _saveDebounce = Timer(const Duration(milliseconds: 500), () {
       if (_activeTable != null) {
-        ApiService.saveTableOrder(_activeTable!['id'], _cart);
+        _queueSave();
       }
     });
   }
 
   Future<void> _returnToTables() async {
+    if (_busy) return;
+    setState(() => _busy = true);
     if (_activeTable != null) {
       _saveDebounce?.cancel();
-      await ApiService.saveTableOrder(_activeTable!['id'], _cart);
+      if (!await _queueSave()) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
     }
     if (!mounted) return;
     setState(() {
+      _busy = false;
       _activeTable = null;
       _cartNotifier.value = [];
       _cardQuantitiesNotifier.value = {};
       _globalDiscount = 0.0;
       _customTotalSellingPrice = null;
       _selectedTabIndex = 1;
+      _checkoutKey = null;
     });
     await _loadTables();
   }
@@ -101,6 +150,7 @@ class _PosScreenState extends State<PosScreen> {
 
   @override
   void dispose() {
+    _productSearch.dispose();
     _searchDebounce?.cancel();
     _saveDebounce?.cancel();
     ThemeService.themeModeNotifier.removeListener(_onThemeChanged);
@@ -115,6 +165,12 @@ class _PosScreenState extends State<PosScreen> {
   DateTime? _lastKeyPress;
 
   bool _handleKeyEvent(KeyEvent event) {
+    if (_busy ||
+        !TickerMode.of(context) ||
+        FocusManager.instance.primaryFocus?.context
+                ?.findAncestorWidgetOfExactType<EditableText>() !=
+            null)
+      return false;
     if (event is KeyDownEvent) {
       final now = DateTime.now();
       if (_lastKeyPress != null &&
@@ -168,7 +224,8 @@ class _PosScreenState extends State<PosScreen> {
           ),
         );
       }
-      _showAddProductDialog(initialBarcode: barcode);
+      if (appPermissions.canManageProducts)
+        _showAddProductDialog(initialBarcode: barcode);
     }
   }
 
@@ -197,15 +254,32 @@ class _PosScreenState extends State<PosScreen> {
   }
 
   Future<void> _openTable(Map<String, dynamic> table) async {
-    setState(() => _isLoading = true);
+    if (_busy) return;
+    if (!await prepareToLeave()) return;
+    if (_activeTable == null && _cart.isNotEmpty) {
+      _notice('أكمل أو امسح سلة البيع المباشر قبل فتح طاولة.');
+      return;
+    }
+    setState(() => _busy = true);
     final orderData = await ApiService.getTableOrder(table['id']);
 
+    if (!mounted) return;
+    if (orderData == null) {
+      setState(() => _busy = false);
+      _notice(ApiService.lastError);
+      return;
+    }
+    _activeTable = null;
     _cartNotifier.value = [];
     _cardQuantitiesNotifier.value = {};
     _globalDiscount = 0.0;
+    _customTotalSellingPrice = null;
+    _checkoutKey = null;
 
-    if (orderData != null && orderData['has_order'] == true) {
-      final items = orderData['order']['items'] as List;
+    if (orderData['has_order'] == true) {
+      final snapshot = orderData['order']['cart_state'];
+      final items = (snapshot?['items'] ?? orderData['order']['items']) as List;
+      _globalDiscount = (snapshot?['global_discount'] as num?)?.toDouble() ?? 0;
       for (var item in items) {
         ProductModel product;
         try {
@@ -217,12 +291,14 @@ class _PosScreenState extends State<PosScreen> {
             barcode: '',
             imageUrl: '',
             purchasePrice: 0,
-            sellingPrice: (item['unit_price'] as num).toDouble(),
+            sellingPrice:
+                ((item['unit_selling_price'] ?? item['unit_price']) as num)
+                    .toDouble(),
             unitProfit: 0.0,
             stockQuantity: 0,
             category: 'عام',
-            isWeight: false,
-            weightUnitGrams: 1000,
+            isWeight: item['is_weight'] == true,
+            weightUnitGrams: item['weight_unit_grams'] ?? 1000,
             weightIncrementStep: 100,
             createdAt: DateTime.now().toIso8601String(),
           );
@@ -234,8 +310,10 @@ class _PosScreenState extends State<PosScreen> {
               product: product,
               quantity: (item['quantity'] as num).toDouble(),
               unitPurchasePrice: product.purchasePrice,
-              unitSellingPrice: (item['unit_price'] as num).toDouble(),
-              discount: 0.0,
+              unitSellingPrice:
+                  ((item['unit_selling_price'] ?? item['unit_price']) as num)
+                      .toDouble(),
+              discount: (item['discount'] as num?)?.toDouble() ?? 0,
             ),
           );
         _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value)
@@ -244,238 +322,307 @@ class _PosScreenState extends State<PosScreen> {
     }
 
     setState(() {
+      _busy = false;
       _activeTable = table;
       _selectedTabIndex = 0;
       _isLoading = false;
     });
   }
 
-  Future<void> _saveTableOrder() async {
-    if (_activeTable == null) return;
-    final success = await ApiService.saveTableOrder(_activeTable!['id'], _cart);
-    if (success) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم حفظ طلب الطاولة بنجاح'),
-            backgroundColor: AppColors.success,
-          ),
-        );
-        setState(() {
-          _activeTable = null;
-          _cartNotifier.value = [];
-          _cardQuantitiesNotifier.value = {};
-          _globalDiscount = 0.0;
-          _selectedTabIndex = 1; // Go back to tables
-        });
-        _loadTables();
-      }
+  String _tableFilter = 'all';
+
+  Widget _panel(Widget child) => Container(
+    clipBehavior: Clip.antiAlias,
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      border: Border.all(color: AppColors.border),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Material(type: MaterialType.transparency, child: child),
+  );
+
+  Future<void> _selectSection(int index) async {
+    FocusScope.of(context).unfocus();
+    if (_busy) return;
+    if (index == 1 && _activeTable != null) {
+      await _returnToTables();
+      return;
     }
+    setState(() => _selectedTabIndex = index);
+    if (index == 1) await _loadTables();
   }
 
   Widget _buildTablesGrid() {
+    final occupied = _tables.where((t) => t['is_active'] == true).length;
+    final visible = _tables
+        .where(
+          (t) =>
+              _tableFilter == 'all' ||
+              (t['is_active'] == true) == (_tableFilter == 'busy'),
+        )
+        .toList();
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(
-                'إدارة الطاولات',
-                style: TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: AppSizes.fontHeader,
-                  fontWeight: FontWeight.bold,
+              for (final filter in [
+                ('all', 'الكل (${_tables.length})'),
+                ('busy', 'مشغولة ($occupied)'),
+                ('free', 'متاحة (${_tables.length - occupied})'),
+              ])
+                ChoiceChip(
+                  label: Text(filter.$2),
+                  selected: _tableFilter == filter.$1,
+                  onSelected: (_) => setState(() => _tableFilter = filter.$1),
                 ),
+              IconButton(
+                tooltip: 'تحديث الطاولات',
+                onPressed: _loadTables,
+                icon: const Icon(Icons.refresh),
               ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primarySolid,
-                ),
-                icon: const Icon(Icons.add, color: Colors.white),
-                label: const Text(
-                  'إضافة طاولات',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onPressed: () {
-                  final ctrl = TextEditingController(text: '1');
-                  showDialog(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      backgroundColor: AppColors.surface,
-                      title: Text(
-                        'إضافة طاولات جديدة',
-                        style: TextStyle(color: AppColors.textPrimary),
+              if (appPermissions.canManageProducts)
+                FilledButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('إضافة طاولات'),
+                  onPressed: () {
+                    final ctrl = TextEditingController(text: '1');
+                    showDialog(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: AppColors.surface,
+                        title: Text(
+                          'إضافة طاولات جديدة',
+                          style: TextStyle(color: AppColors.textPrimary),
+                        ),
+                        content: TextField(
+                          controller: ctrl,
+                          keyboardType: TextInputType.number,
+                          style: TextStyle(color: AppColors.textPrimary),
+                          decoration: InputDecoration(
+                            labelText: 'عدد الطاولات',
+                            labelStyle: TextStyle(color: AppColors.textGray),
+                            filled: true,
+                            fillColor: AppColors.background,
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('إلغاء'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () async {
+                              final c = int.tryParse(ctrl.text) ?? 1;
+                              Navigator.pop(ctx);
+                              await ApiService.createTables(c);
+                              _loadTables();
+                            },
+                            child: const Text('تأكيد'),
+                          ),
+                        ],
                       ),
-                      content: TextField(
-                        controller: ctrl,
-                        keyboardType: TextInputType.number,
-                        style: TextStyle(color: AppColors.textPrimary),
-                        decoration: InputDecoration(
-                          labelText: 'عدد الطاولات',
-                          labelStyle: TextStyle(color: AppColors.textGray),
-                          filled: true,
-                          fillColor: AppColors.background,
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('إلغاء'),
-                        ),
-                        ElevatedButton(
-                          onPressed: () async {
-                            final c = int.tryParse(ctrl.text) ?? 1;
-                            Navigator.pop(ctx);
-                            await ApiService.createTables(c);
-                            _loadTables();
-                          },
-                          child: const Text('تأكيد'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                    );
+                  },
+                ),
             ],
           ),
         ),
         Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.all(16),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 200,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              childAspectRatio: 1,
-            ),
-            itemCount: _tables.length,
-            itemBuilder: (context, index) {
-              final table = _tables[index];
-              final isActive = table['is_active'] == true;
-              return InkWell(
-                onTap: () => _openTable(table),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isActive
-                        ? AppColors.success.withOpacity(0.9)
-                        : (ThemeService.isDark
-                              ? const Color(0xFF334155)
-                              : const Color(0xFFE2E8F0)),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.cardShadow,
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
+          child: _isLoadingTables
+              ? const Center(child: CircularProgressIndicator())
+              : visible.isEmpty
+              ? _emptyState(
+                  Icons.table_restaurant_outlined,
+                  'لا توجد طاولات في هذا القسم',
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final columns = (constraints.maxWidth / 210).floor().clamp(
+                      1,
+                      8,
+                    );
+                    return GridView.builder(
+                      key: const PageStorageKey('pos-tables'),
+                      padding: const EdgeInsets.all(12),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        mainAxisExtent:
+                            260 +
+                            (MediaQuery.textScalerOf(context).scale(1) - 1)
+                                    .clamp(0, 2) *
+                                120,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
                       ),
-                    ],
-                  ),
-                  child: Stack(
-                    children: [
-                      Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.table_restaurant,
-                              size: 48,
-                              color: isActive
-                                  ? Colors.white
-                                  : AppColors.textGray,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              table['name'],
-                              style: TextStyle(
-                                color: isActive
-                                    ? Colors.white
-                                    : AppColors.textPrimary,
-                                fontSize: AppSizes.fontHeader,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              isActive ? 'مشغولة' : 'متاحة',
-                              style: TextStyle(
-                                color: isActive
-                                    ? Colors.white70
-                                    : AppColors.textGray,
-                                fontSize: AppSizes.fontNormal,
-                              ),
-                            ),
-                            if (isActive && table['total_price'] != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8.0),
-                                child: Text(
-                                  '${table['total_price']} د.ع',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: AppSizes.fontLarge,
+                      itemCount: visible.length,
+                      itemBuilder: (context, index) {
+                        final table = visible[index];
+                        final active = table['is_active'] == true;
+                        final color = active
+                            ? AppColors.primaryLight
+                            : AppColors.stockHighText;
+                        return _panel(
+                          InkWell(
+                            key: ValueKey('table-${table['id']}'),
+                            onTap: () => _openTable(table),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      CircleAvatar(
+                                        backgroundColor: color.withValues(
+                                          alpha: .10,
+                                        ),
+                                        child: Icon(
+                                          Icons.table_restaurant_outlined,
+                                          color: color,
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      if (appPermissions.canManageProducts)
+                                        IconButton(
+                                          tooltip: 'حذف الطاولة',
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                          color: AppColors.textSecondary,
+                                          onPressed: () async {
+                                            if (active) {
+                                              _notice(
+                                                'لا يمكن حذف طاولة مشغولة',
+                                              );
+                                              return;
+                                            }
+                                            final confirmed =
+                                                await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (ctx) => AlertDialog(
+                                                    title: Text(
+                                                      'حذف ${table['name']}؟',
+                                                    ),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                              ctx,
+                                                              false,
+                                                            ),
+                                                        child: const Text(
+                                                          'إلغاء',
+                                                        ),
+                                                      ),
+                                                      FilledButton(
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                              ctx,
+                                                              true,
+                                                            ),
+                                                        child: const Text(
+                                                          'حذف',
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                            if (confirmed != true) return;
+                                            await ApiService.deleteTable(
+                                              table['id'],
+                                            );
+                                            if (mounted) await _loadTables();
+                                          },
+                                        ),
+                                    ],
                                   ),
-                                ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    table['name'] ?? '',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 19,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    active
+                                        ? 'مشغولة • طلب محفوظ'
+                                        : 'متاحة لطلب جديد',
+                                    style: TextStyle(
+                                      color: color,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    active
+                                        ? '${table['total_price'] ?? 0} د.ع'
+                                        : 'ابدأ بإضافة المنتجات',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          active
+                                              ? 'فتح الطلب والحساب'
+                                              : 'فتح الطاولة',
+                                          style: TextStyle(
+                                            color: AppColors.primaryLight,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.chevron_left,
+                                        color: AppColors.primaryLight,
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
-                          ],
-                        ),
-                      ),
-                      if (isActive)
-                        Positioned(
-                          bottom: 4,
-                          right: 4,
-                          left: 4,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withOpacity(0.2),
-                              elevation: 0,
                             ),
-                            icon: const Icon(
-                              Icons.payment,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                            label: const Text(
-                              'دفع السعر',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            onPressed: () => _openTable(table),
                           ),
-                        ),
-                      Positioned(
-                        top: 4,
-                        right: 4,
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.delete,
-                            color: AppColors.danger,
-                          ),
-                          onPressed: () async {
-                            if (isActive) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('لا يمكن حذف طاولة مشغولة'),
-                                  backgroundColor: AppColors.danger,
-                                ),
-                              );
-                              return;
-                            }
-                            await ApiService.deleteTable(table['id']);
-                            _loadTables();
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
+                        );
+                      },
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );
   }
+
+  Widget _emptyState(IconData icon, String text) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 44, color: AppColors.textHint),
+          const SizedBox(height: 12),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Future<void> _loadProducts() async {
     setState(() => _isLoading = true);
@@ -495,7 +642,24 @@ class _PosScreenState extends State<PosScreen> {
 
   // Synchronize product card quantity with cart sidebar in real-time
   void _updateProductQuantity(ProductModel product, double newQty) {
+    if (_busy || !newQty.isFinite) return;
     if (newQty < 0) newQty = 0.0;
+    final current =
+        _cart.where((i) => i.product.id == product.id).firstOrNull?.quantity ??
+        0;
+    final available =
+        _products.where((p) => p.id == product.id).firstOrNull?.stockQuantity ??
+        product.stockQuantity;
+    if (newQty > available && newQty > current) {
+      _notice(
+        available <= 0
+            ? 'نفد مخزون هذا المنتج.'
+            : 'المتاح فقط: ${_formatQty(available)}${product.isWeight ? ' غم' : ''}',
+      );
+      _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value);
+      _cartNotifier.value = List.from(_cart);
+      return;
+    }
 
     // No setState needed, Notifiers will handle it
     _cardQuantitiesNotifier.value = Map.from(_cardQuantitiesNotifier.value)
@@ -1680,1109 +1844,756 @@ class _PosScreenState extends State<PosScreen> {
   }
 
   Future<void> _completeCheckout() async {
-    if (_cart.isEmpty) return;
+    if (_busy || _cart.isEmpty) return;
+    _saveDebounce?.cancel();
+    setState(() => _busy = true);
+    if (_activeTable != null && !await _queueSave()) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
+    _checkoutKey ??=
+        '${ApiService.currentUser?.id}-${DateTime.now().microsecondsSinceEpoch}';
     final success = await ApiService.checkoutSale(
       _cart,
       'نقداً',
       _globalDiscount,
       tableId: _activeTable?['id'],
+      checkoutKey: _checkoutKey!,
+    );
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (success) {
+        _activeTable = null;
+        _checkoutKey = null;
+        _cartNotifier.value = [];
+        _cardQuantitiesNotifier.value = {};
+        _globalDiscount = 0;
+        _customTotalSellingPrice = null;
+      }
+    });
+    _notice(
+      success ? 'تم إكمال البيع وتحديث المخزون بنجاح' : ApiService.lastError,
     );
     if (success) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إكمال عملية البيع وتحديث المخزون بنجاح!'),
-            backgroundColor: AppColors.success,
-          ),
-        );
-        setState(() {
-          _cartNotifier.value = [];
-          _cardQuantitiesNotifier.value = {};
-          _controllers.clear();
-          _globalDiscount = 0.0;
-          _activeTable = null;
-        });
-        _loadProducts();
+      await _loadProducts();
+      if (mounted) await _loadTables();
+    }
+  }
+
+  Widget? _buildProductImage(String imageUrl) {
+    final source = imageUrl.trim();
+    if (source.isEmpty) return null;
+    try {
+      final ImageProvider provider;
+      if (source.startsWith('data:image')) {
+        provider = MemoryImage(base64Decode(source.split(',').last));
+      } else if (source.startsWith('https://') ||
+          source.startsWith('http://')) {
+        provider = NetworkImage(source);
+      } else {
+        return null;
       }
-    }
-  }
-
-  Widget _buildProductImage(String imageUrl) {
-    if (imageUrl.isNotEmpty) {
-      if (imageUrl.startsWith('data:image')) {
-        try {
-          final base64Data = imageUrl.split(',').last;
-          final bytes = base64Decode(base64Data);
-          return Image.memory(
-            bytes,
-            height: 140,
-            width: double.infinity,
-            fit: BoxFit.cover,
-          );
-        } catch (_) {}
-      } else if (imageUrl.startsWith('http://') ||
-          imageUrl.startsWith('https://')) {
-        return Image.network(
-          imageUrl,
-          height: 140,
-          width: double.infinity,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPlaceholderImage(),
-        );
-      }
-    }
-    return _buildPlaceholderImage();
-  }
-
-  Widget _buildPlaceholderImage() {
-    return Container(
-      height: 140,
-      width: double.infinity,
-      color: AppColors.background,
-      child: Center(
-        child: Icon(
-          Icons.shopping_bag_outlined,
-          size: 54,
-          color: AppColors.primaryLight.withOpacity(0.7),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final double totalCostSum = _cart.fold(
-      0.0,
-      (sum, i) => sum + i.totalPurchaseCost,
-    );
-    final double totalSellingSum = _cart.fold(
-      0.0,
-      (sum, i) => sum + i.totalSellingAmount,
-    );
-    final double itemDiscountSum = _cart.fold(
-      0.0,
-      (sum, i) => sum + i.totalDiscountAmount,
-    );
-
-    final double totalDiscountSum = itemDiscountSum + _globalDiscount;
-    final double totalFinalAmount = totalSellingSum - totalDiscountSum;
-    final double totalNetProfitSum = totalFinalAmount - totalCostSum;
-
-    Widget buildProductsArea() {
-      return Expanded(
-        flex: 75,
-        child: Column(
-          children: [
-            // Tabs
-            Container(
-              color: AppColors.background,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        if (_activeTable != null) {
-                          _activeTable = null;
-                          _cartNotifier.value = [];
-                          _cardQuantitiesNotifier.value = {};
-                          _globalDiscount = 0.0;
-                        }
-                        setState(() => _selectedTabIndex = 0);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(
-                          color: _selectedTabIndex == 0
-                              ? AppColors.surface
-                              : AppColors.background,
-                          border: Border(
-                            bottom: BorderSide(
-                              color: _selectedTabIndex == 0
-                                  ? AppColors.primaryLight
-                                  : Colors.transparent,
-                              width: 3,
-                            ),
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            'البيع المباشر' +
-                                (_activeTable != null
-                                    ? ' (إلغاء طلب الطاولة)'
-                                    : ''),
-                            style: TextStyle(
-                              color: _selectedTabIndex == 0
-                                  ? AppColors.primaryLight
-                                  : AppColors.textGray,
-                              fontSize: AppSizes.fontHeader,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: InkWell(
-                      onTap: () {
-                        if (_activeTable != null) {
-                          _returnToTables();
-                        } else {
-                          setState(() => _selectedTabIndex = 1);
-                          _loadTables();
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        decoration: BoxDecoration(
-                          color: _selectedTabIndex == 1
-                              ? AppColors.surface
-                              : AppColors.background,
-                          border: Border(
-                            bottom: BorderSide(
-                              color: _selectedTabIndex == 1
-                                  ? AppColors.primaryLight
-                                  : Colors.transparent,
-                              width: 3,
-                            ),
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            'الطاولات',
-                            style: TextStyle(
-                              color: _selectedTabIndex == 1
-                                  ? AppColors.primaryLight
-                                  : AppColors.textGray,
-                              fontSize: AppSizes.fontHeader,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (_selectedTabIndex == 1)
-              Expanded(
-                child: _isLoadingTables
-                    ? const Center(child: CircularProgressIndicator())
-                    : _buildTablesGrid(),
-              )
-            else
-              Expanded(
-                child: Column(
-                  children: [
-                    if (_activeTable != null)
-                      Container(
-                        color: AppColors.success.withOpacity(0.2),
-                        padding: const EdgeInsets.all(8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.table_restaurant,
-                              color: AppColors.success,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'طلب نشط: ${_activeTable!['name']}',
-                              style: const TextStyle(
-                                color: AppColors.success,
-                                fontSize: AppSizes.fontHeader,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            TextButton.icon(
-                              onPressed: _returnToTables,
-                              icon: const Icon(Icons.arrow_back, size: 18),
-                              label: const Text('رجوع للطاولات'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: AppColors.success,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    // Top Toolbar (Search, Add Product)
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      color: AppColors.surface,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              style: TextStyle(color: AppColors.textPrimary),
-                              onChanged: (val) {
-                                if (_searchDebounce?.isActive ?? false)
-                                  _searchDebounce!.cancel();
-                                _searchDebounce = Timer(
-                                  const Duration(milliseconds: 400),
-                                  () {
-                                    setState(() {
-                                      _searchQuery = val;
-                                    });
-                                    _loadProducts();
-                                  },
-                                );
-                              },
-                              decoration: InputDecoration(
-                                hintText:
-                                    'بحث فوري في المنتجات (الاسم، التصنيف)...',
-                                hintStyle: TextStyle(color: AppColors.textHint),
-                                prefixIcon: Icon(
-                                  Icons.search,
-                                  color: AppColors.primaryLight,
-                                ),
-                                filled: true,
-                                fillColor: AppColors.background,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 10,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(width: 12),
-                          if (appPermissions.canManageProducts)
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primarySolid,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 14,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              icon: const Icon(
-                                Icons.add_circle_outline,
-                                color: Colors.white,
-                              ),
-                              label: const Text(
-                                'إضافة منتج',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              onPressed: _showAddProductDialog,
-                            ),
-                        ],
-                      ),
-                    ),
-
-                    // Products Grid (4 items per row on desktop)
-                    Expanded(
-                      child: _isLoading
-                          ? Center(
-                              child: CircularProgressIndicator(
-                                color: AppColors.primaryLight,
-                              ),
-                            )
-                          : _products.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.inventory_2_outlined,
-                                    size: 64,
-                                    color: AppColors.textGray.withOpacity(0.3),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'لا توجد منتجات مطابقة حالياً',
-                                    style: TextStyle(color: AppColors.textGray),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : GridView.builder(
-                              padding: const EdgeInsets.all(16),
-                              gridDelegate:
-                                  const SliverGridDelegateWithMaxCrossAxisExtent(
-                                    maxCrossAxisExtent: 310,
-                                    mainAxisExtent: 430,
-                                    crossAxisSpacing: 16,
-                                    mainAxisSpacing: 16,
-                                  ),
-                              itemCount: _products.length,
-                              itemBuilder: (context, index) {
-                                final product = _products[index];
-                                return ValueListenableBuilder<Map<int, double>>(
-                                  valueListenable: _cardQuantitiesNotifier,
-                                  builder: (context, cardQuantities, child) {
-                                    final cardQty =
-                                        cardQuantities[product.id] ?? 0;
-                                    final String fQty = _formatQty(cardQty);
-                                    final cardCtrl = _getController(
-                                      'card_qty_${product.id}',
-                                      fQty,
-                                    );
-                                    if (double.tryParse(cardCtrl.text) !=
-                                            cardQty &&
-                                        cardCtrl.text != fQty) {
-                                      cardCtrl.text = fQty;
-                                    }
-
-                                    return GestureDetector(
-                                      onTap: () {
-                                        if (cardQty == 0) {
-                                          _updateProductQuantity(
-                                            product,
-                                            product.isWeight
-                                                ? product.weightIncrementStep
-                                                : 1.0,
-                                          );
-                                        }
-                                      },
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          color: AppColors.surface,
-                                          borderRadius: BorderRadius.circular(
-                                            16,
-                                          ),
-                                          border: Border.all(
-                                            color: cardQty > 0
-                                                ? AppColors.primarySolid
-                                                : AppColors.border,
-                                            width: cardQty > 0 ? 2 : 1,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: AppColors.cardShadow,
-                                              blurRadius: 6,
-                                              offset: const Offset(0, 3),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            // Product Image & Stock Badge
-                                            Stack(
-                                              children: [
-                                                ClipRRect(
-                                                  borderRadius:
-                                                      const BorderRadius.vertical(
-                                                        top: Radius.circular(
-                                                          16,
-                                                        ),
-                                                      ),
-                                                  child: _buildProductImage(
-                                                    product.imageUrl,
-                                                  ),
-                                                ),
-                                                Positioned(
-                                                  top: 8,
-                                                  right: 8,
-                                                  child: Container(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 8,
-                                                          vertical: 4,
-                                                        ),
-                                                    decoration: BoxDecoration(
-                                                      color:
-                                                          product.stockQuantity >
-                                                              5
-                                                          ? AppColors
-                                                                .stockHighBg
-                                                          : AppColors
-                                                                .stockLowBg,
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            12,
-                                                          ),
-                                                    ),
-                                                    child: Text(
-                                                      'المخزن: ${product.stockQuantity}',
-                                                      style: TextStyle(
-                                                        color:
-                                                            product.stockQuantity >
-                                                                5
-                                                            ? AppColors
-                                                                  .stockHighText
-                                                            : AppColors
-                                                                  .stockLowText,
-                                                        fontSize:
-                                                            AppSizes.fontSmall,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-
-                                            // Card Info Body
-                                            Expanded(
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 10.0,
-                                                      vertical: 8.0,
-                                                    ),
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment
-                                                          .spaceBetween,
-                                                  children: [
-                                                    Text(
-                                                      product.name,
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        color: AppColors
-                                                            .textPrimary,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        fontSize:
-                                                            AppSizes.fontTitle,
-                                                      ),
-                                                    ),
-                                                    Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment
-                                                              .spaceBetween,
-                                                      children: [
-                                                        if (appPermissions
-                                                            .canViewPurchasePrice)
-                                                          Text(
-                                                            'شراء: ${product.purchasePrice.toStringAsFixed(0)}',
-                                                            style: TextStyle(
-                                                              color: AppColors
-                                                                  .textGray,
-                                                              fontSize: AppSizes
-                                                                  .fontNormal,
-                                                            ),
-                                                          )
-                                                        else
-                                                          Text(
-                                                            'شراء: ***',
-                                                            style: TextStyle(
-                                                              color: AppColors
-                                                                  .textGray,
-                                                              fontSize: AppSizes
-                                                                  .fontNormal,
-                                                            ),
-                                                          ),
-
-                                                        if (appPermissions
-                                                            .canViewSellingPrice)
-                                                          Text(
-                                                            'بيع: ${product.sellingPrice.toStringAsFixed(0)}',
-                                                            style: TextStyle(
-                                                              color: AppColors
-                                                                  .primaryLight,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .bold,
-                                                              fontSize: AppSizes
-                                                                  .fontMedium,
-                                                            ),
-                                                          ),
-
-                                                        if (appPermissions
-                                                            .canViewProfit)
-                                                          Text(
-                                                            'ربح: ${product.unitProfit.toStringAsFixed(0)}',
-                                                            style: const TextStyle(
-                                                              color: AppColors
-                                                                  .success,
-                                                              fontSize: AppSizes
-                                                                  .fontNormal,
-                                                            ),
-                                                          )
-                                                        else
-                                                          const Text(
-                                                            'ربح: ***',
-                                                            style: TextStyle(
-                                                              color: AppColors
-                                                                  .success,
-                                                              fontSize: AppSizes
-                                                                  .fontNormal,
-                                                            ),
-                                                          ),
-                                                      ],
-                                                    ),
-                                                    // Live Quantity Box (Preserves Focus while Typing)
-                                                    Row(
-                                                      children: [
-                                                        IconButton(
-                                                          icon: const Icon(
-                                                            Icons.remove_circle,
-                                                            color: AppColors
-                                                                .danger,
-                                                            size: 24,
-                                                          ),
-                                                          onPressed: () =>
-                                                              _updateProductQuantity(
-                                                                product,
-                                                                cardQty -
-                                                                    (product.isWeight
-                                                                        ? product
-                                                                              .weightIncrementStep
-                                                                        : 1.0),
-                                                              ),
-                                                        ),
-                                                        Expanded(
-                                                          child: SizedBox(
-                                                            height: 36,
-                                                            child: TextField(
-                                                              controller:
-                                                                  cardCtrl,
-                                                              keyboardType:
-                                                                  TextInputType
-                                                                      .number,
-                                                              textAlign:
-                                                                  TextAlign
-                                                                      .center,
-                                                              style: TextStyle(
-                                                                color: AppColors
-                                                                    .textPrimary,
-                                                                fontWeight:
-                                                                    FontWeight
-                                                                        .bold,
-                                                                fontSize: AppSizes
-                                                                    .fontLarge,
-                                                              ),
-                                                              decoration: InputDecoration(
-                                                                filled: true,
-                                                                fillColor: AppColors
-                                                                    .background,
-                                                                contentPadding:
-                                                                    const EdgeInsets.symmetric(
-                                                                      vertical:
-                                                                          4,
-                                                                    ),
-                                                                border: OutlineInputBorder(
-                                                                  borderRadius:
-                                                                      BorderRadius.circular(
-                                                                        8,
-                                                                      ),
-                                                                  borderSide:
-                                                                      BorderSide
-                                                                          .none,
-                                                                ),
-                                                              ),
-                                                              onChanged: (val) {
-                                                                final q =
-                                                                    double.tryParse(
-                                                                      val,
-                                                                    ) ??
-                                                                    0.0;
-                                                                _updateProductQuantity(
-                                                                  product,
-                                                                  q,
-                                                                );
-                                                              },
-                                                            ),
-                                                          ),
-                                                        ),
-                                                        IconButton(
-                                                          icon: const Icon(
-                                                            Icons.add_circle,
-                                                            color: AppColors
-                                                                .success,
-                                                            size: 24,
-                                                          ),
-                                                          onPressed: () =>
-                                                              _updateProductQuantity(
-                                                                product,
-                                                                cardQty +
-                                                                    (product.isWeight
-                                                                        ? product
-                                                                              .weightIncrementStep
-                                                                        : 1.0),
-                                                              ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    // Card Actions: Edit, Restock, Delete
-                                                    if (appPermissions
-                                                        .canManageProducts)
-                                                      Row(
-                                                        mainAxisAlignment:
-                                                            MainAxisAlignment
-                                                                .spaceBetween,
-                                                        children: [
-                                                          TextButton.icon(
-                                                            style:
-                                                                TextButton.styleFrom(
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  minimumSize:
-                                                                      const Size(
-                                                                        40,
-                                                                        30,
-                                                                      ),
-                                                                ),
-                                                            icon: Icon(
-                                                              Icons.edit,
-                                                              color: AppColors
-                                                                  .primaryLight,
-                                                              size: 14,
-                                                            ),
-                                                            label: Text(
-                                                              'تعديل',
-                                                              style: TextStyle(
-                                                                color: AppColors
-                                                                    .primaryLight,
-                                                                fontSize: AppSizes
-                                                                    .fontSmall,
-                                                              ),
-                                                            ),
-                                                            onPressed: () =>
-                                                                _showEditProductDialog(
-                                                                  product,
-                                                                ),
-                                                          ),
-                                                          TextButton.icon(
-                                                            style:
-                                                                TextButton.styleFrom(
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  minimumSize:
-                                                                      const Size(
-                                                                        40,
-                                                                        30,
-                                                                      ),
-                                                                ),
-                                                            icon: const Icon(
-                                                              Icons.inventory,
-                                                              color: AppColors
-                                                                  .warning,
-                                                              size: 14,
-                                                            ),
-                                                            label: const Text(
-                                                              'توريد',
-                                                              style: TextStyle(
-                                                                color: AppColors
-                                                                    .warning,
-                                                                fontSize: AppSizes
-                                                                    .fontSmall,
-                                                              ),
-                                                            ),
-                                                            onPressed: () =>
-                                                                _showRestockDialog(
-                                                                  product,
-                                                                ),
-                                                          ),
-                                                          TextButton.icon(
-                                                            style:
-                                                                TextButton.styleFrom(
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  minimumSize:
-                                                                      const Size(
-                                                                        40,
-                                                                        30,
-                                                                      ),
-                                                                ),
-                                                            icon: Icon(
-                                                              Icons.history,
-                                                              color: AppColors
-                                                                  .historyIcon,
-                                                              size: 14,
-                                                            ),
-                                                            label: Text(
-                                                              'السجل',
-                                                              style: TextStyle(
-                                                                color: AppColors
-                                                                    .historyIcon,
-                                                                fontSize: AppSizes
-                                                                    .fontSmall,
-                                                              ),
-                                                            ),
-                                                            onPressed: () =>
-                                                                _showRestockHistoryDialog(
-                                                                  product,
-                                                                ),
-                                                          ),
-                                                          TextButton.icon(
-                                                            style:
-                                                                TextButton.styleFrom(
-                                                                  padding:
-                                                                      EdgeInsets
-                                                                          .zero,
-                                                                  minimumSize:
-                                                                      const Size(
-                                                                        40,
-                                                                        30,
-                                                                      ),
-                                                                ),
-                                                            icon: const Icon(
-                                                              Icons.delete,
-                                                              color: AppColors
-                                                                  .danger,
-                                                              size: 14,
-                                                            ),
-                                                            label: const Text(
-                                                              'حذف',
-                                                              style: TextStyle(
-                                                                color: AppColors
-                                                                    .danger,
-                                                                fontSize: AppSizes
-                                                                    .fontSmall,
-                                                              ),
-                                                            ),
-                                                            onPressed: () =>
-                                                                _confirmDeleteProduct(
-                                                                  product,
-                                                                ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    SizedBox(
-                                                      width: double.infinity,
-                                                      child: ElevatedButton.icon(
-                                                        style: ElevatedButton.styleFrom(
-                                                          backgroundColor:
-                                                              AppColors
-                                                                  .primarySolid,
-                                                          padding:
-                                                              const EdgeInsets.symmetric(
-                                                                vertical: 12,
-                                                              ),
-                                                          shape: RoundedRectangleBorder(
-                                                            borderRadius:
-                                                                BorderRadius.circular(
-                                                                  8,
-                                                                ),
-                                                          ),
-                                                        ),
-                                                        icon: const Icon(
-                                                          Icons
-                                                              .add_shopping_cart,
-                                                          color: Colors.white,
-                                                          size: 20,
-                                                        ),
-                                                        label: const Text(
-                                                          'إضافة للسلة',
-                                                          style: TextStyle(
-                                                            color: Colors.white,
-                                                            fontWeight:
-                                                                FontWeight.bold,
-                                                            fontSize: AppSizes
-                                                                .fontLarge,
-                                                          ),
-                                                        ),
-                                                        onPressed: () =>
-                                                            _updateProductQuantity(
-                                                              product,
-                                                              cardQty +
-                                                                  (product.isWeight
-                                                                      ? product
-                                                                            .weightIncrementStep
-                                                                      : 1.0),
-                                                            ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      );
-    }
-
-    Widget buildCartArea() {
-      return ValueListenableBuilder<List<CartItemModel>>(
-        valueListenable: _cartNotifier,
-        builder: (context, _cart, child) {
-          final double totalCostSum = _cart.fold(
-            0.0,
-            (sum, i) => sum + i.totalPurchaseCost,
-          );
-          final double totalSellingSum = _cart.fold(
-            0.0,
-            (sum, i) => sum + i.totalSellingAmount,
-          );
-          final double itemDiscountSum = _cart.fold(
-            0.0,
-            (sum, i) => sum + i.totalDiscountAmount,
-          );
-          final double totalDiscountSum = itemDiscountSum + _globalDiscount;
-          final double totalFinalAmount = totalSellingSum - totalDiscountSum;
-          final double totalNetProfitSum = totalFinalAmount - totalCostSum;
-
-          return Container(
-            width: double.infinity,
-            color: AppColors.surface,
+      return InkWell(
+        onTap: () => showDialog(
+          context: context,
+          builder: (ctx) => Dialog(
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // Sidebar Header
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  color: AppColors.background,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.shopping_cart,
-                            color: AppColors.primaryLight,
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'تفاصيل الطلب والسلة (25%)',
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: AppSizes.fontHeader,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (_cart.isNotEmpty)
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _cartNotifier.value = [];
-                              _cardQuantitiesNotifier.value = {};
-                              _globalDiscount = 0.0;
-                            });
-                          },
-                          child: const Text(
-                            'محي السلة',
-                            style: TextStyle(
-                              color: AppColors.danger,
-                              fontSize: AppSizes.fontNormal,
-                            ),
-                          ),
-                        ),
-                    ],
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: IconButton(
+                    tooltip: 'إغلاق الصورة',
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close),
                   ),
                 ),
-
-                // Cart Items List
-                Expanded(
-                  child: _cart.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.remove_shopping_cart_outlined,
-                                size: 48,
-                                color: AppColors.textGray.withOpacity(0.3),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'السلة فارغة. اضغط + في كارت المنتج لإضافته',
-                                style: TextStyle(
-                                  color: AppColors.textHint,
-                                  fontSize: AppSizes.fontMedium,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(10),
-                          itemCount: _cart.length,
-                          itemBuilder: (context, index) {
-                            final item = _cart[index];
-                            final pId = item.product.id;
-
-                            return CartItemWidget(
-                              item: item,
-                              onUpdate: () {
-                                _cartNotifier.value = List.from(
-                                  _cartNotifier.value,
-                                );
-                                if (_activeTable != null)
-                                  _debouncedSaveTableOrder();
-                              },
-                              onUpdateQuantity: _updateProductQuantity,
-                            );
-                          },
-                        ),
-                ),
-
-                // BOTTOM SUMMARY PANEL WITH FULLY EDITABLE INTERACTIVE TOTALS & FOCUS RETENTION
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  color: AppColors.background,
-                  child: Column(
-                    children: [
-                      CartSummaryWidget(
-                        totalCostSum: totalCostSum,
-                        totalSellingSum: totalSellingSum,
-                        totalDiscountSum: totalDiscountSum,
-                        totalFinalAmount: totalFinalAmount,
-                        totalNetProfitSum: totalNetProfitSum,
-                        totalItems: _cart.length,
-                        canViewPurchasePrice:
-                            appPermissions.canViewPurchasePrice,
-                        canViewProfit: appPermissions.canViewProfit,
-                        onUpdateTotalSelling: (newTotal) {
-                          setState(() {
-                            _customTotalSellingPrice = newTotal;
-                          });
-                          if (_activeTable != null) _debouncedSaveTableOrder();
-                        },
-                        onUpdateTotalDiscount: (newDisc) {
-                          setState(() {
-                            _updateCartTotalDiscount(newDisc);
-                          });
-                          if (_activeTable != null) _debouncedSaveTableOrder();
-                        },
-                        onUpdateFinalTotal: (newFinal) {
-                          setState(() {
-                            _updateCartFinalTotal(newFinal);
-                          });
-                          if (_activeTable != null) _debouncedSaveTableOrder();
-                        },
-                      ),
-                      const SizedBox(height: 8),
-
-                      SizedBox(
-                        width: double.infinity,
-                        height: 46,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _cart.isNotEmpty
-                                ? AppColors.success
-                                : AppColors.border,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          icon: const Icon(Icons.print, color: Colors.white),
-                          label: Text(
-                            _activeTable != null
-                                ? 'إكمال وحساب طاولة ${_activeTable!['table_number']}'
-                                : 'إكمال البيع وطباعة الفاتورة',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: AppSizes.fontLarge,
-                            ),
-                          ),
-                          onPressed: _cart.isNotEmpty
-                              ? _completeCheckout
-                              : null,
-                        ),
-                      ),
-                    ],
+                Flexible(
+                  child: InteractiveViewer(
+                    maxScale: 4,
+                    child: Image(
+                      image: provider,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, error, stack) =>
+                          const Text('تعذر تحميل الصورة'),
+                    ),
                   ),
                 ),
               ],
             ),
-          );
-        },
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image(
+            image: provider,
+            width: double.infinity,
+            fit: BoxFit.contain,
+            errorBuilder: (_, error, stack) => const SizedBox.shrink(),
+          ),
+        ),
       );
+    } catch (_) {
+      return null;
     }
+  }
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      floatingActionButton: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 800) return const SizedBox.shrink();
-          return ValueListenableBuilder<List<CartItemModel>>(
-            valueListenable: _cartNotifier,
-            builder: (context, cart, _) {
-              final double baseSellingSum = cart.fold(
-                0.0,
-                (sum, i) => sum + i.totalSellingAmount,
-              );
-              final double totalSellingSum =
-                  _customTotalSellingPrice ?? baseSellingSum;
-              final double itemDiscountSum = cart.fold(
-                0.0,
-                (sum, i) => sum + i.totalDiscountAmount,
-              );
-              final double totalDiscountSum = itemDiscountSum + _globalDiscount;
-              final double totalFinalAmount =
-                  totalSellingSum - totalDiscountSum;
-              return FloatingActionButton.extended(
-                backgroundColor: AppColors.primarySolid,
-                onPressed: () {
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    backgroundColor: Colors.transparent,
-                    builder: (ctx) => Directionality(
-                      textDirection: TextDirection.rtl,
-                      child: FractionallySizedBox(
-                        heightFactor: 0.9,
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(20),
+  Widget _buildProductCard(
+    ProductModel product,
+  ) => ValueListenableBuilder<Map<int, double>>(
+    key: ValueKey('product-card-${product.id}'),
+    valueListenable: _cardQuantitiesNotifier,
+    builder: (context, quantities, _) {
+      final quantity = quantities[product.id] ?? 0;
+      final step = product.isWeight ? product.weightIncrementStep : 1.0;
+      final controller = _getController(
+        'card_qty_${product.id}',
+        _formatQty(quantity),
+      );
+      if (double.tryParse(controller.text) != quantity)
+        controller.text = _formatQty(quantity);
+      return Container(
+        key: ValueKey('product-${product.id}'),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: quantity > 0 ? AppColors.primaryLight : AppColors.border,
+            width: quantity > 0 ? 2 : 1,
+          ),
+        ),
+        child: _photoCardContent(
+          product,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          product.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
                           ),
-                          child: buildCartArea(),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          product.category,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (appPermissions.canManageProducts)
+                    PopupMenuButton<String>(
+                      tooltip: 'إدارة المنتج',
+                      padding: EdgeInsets.zero,
+                      icon: const Icon(Icons.more_vert, size: 20),
+                      onSelected: (action) {
+                        switch (action) {
+                          case 'edit':
+                            _showEditProductDialog(product);
+                          case 'restock':
+                            _showRestockDialog(product);
+                          case 'history':
+                            _showRestockHistoryDialog(product);
+                          case 'delete':
+                            _confirmDeleteProduct(product);
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('تعديل المنتج'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'restock',
+                          child: Text('توريد المخزون'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'history',
+                          child: Text('سجل التوريد'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('حذف المنتج'),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 4,
+                children: [
+                  Text(
+                    '${product.sellingPrice.toStringAsFixed(0)} د.ع${product.isWeight ? ' / ${product.weightUnitGrams} غم' : ''}',
+                    style: TextStyle(
+                      color: AppColors.primaryLight,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                  Text(
+                    'المخزون: ${_formatQty(product.stockQuantity)}${product.isWeight ? ' غم' : ''}',
+                    style: TextStyle(
+                      color: product.stockQuantity > 5
+                          ? AppColors.stockHighText
+                          : AppColors.stockLowText,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+              if (appPermissions.canViewPurchasePrice ||
+                  appPermissions.canViewProfit)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Wrap(
+                    spacing: 12,
+                    runSpacing: 4,
+                    children: [
+                      if (appPermissions.canViewPurchasePrice)
+                        Text(
+                          'شراء: ${product.purchasePrice.toStringAsFixed(0)}',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      if (appPermissions.canViewProfit)
+                        Text(
+                          'ربح الوحدة: ${product.unitProfit.toStringAsFixed(0)}',
+                          style: TextStyle(
+                            color: AppColors.stockHighText,
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  IconButton(
+                    tooltip: 'تقليل الكمية',
+                    onPressed: quantity > 0
+                        ? () => _updateProductQuantity(product, quantity - step)
+                        : null,
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                  Expanded(
+                    child: TextField(
+                      key: ValueKey('quantity-${product.id}'),
+                      controller: controller,
+                      textAlign: TextAlign.center,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: product.isWeight ? 'الوزن (غم)' : 'الكمية',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
                         ),
                       ),
+                      onChanged: (value) {
+                        final number = double.tryParse(value);
+                        if (number != null)
+                          _updateProductQuantity(product, number);
+                      },
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'زيادة الكمية',
+                    onPressed: quantity >= product.stockQuantity
+                        ? null
+                        : () => _updateProductQuantity(
+                            product,
+                            (quantity + step).clamp(0, product.stockQuantity),
+                          ),
+                    icon: Icon(
+                      Icons.add_circle_outline,
+                      color: AppColors.primaryLight,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  key: ValueKey('add-product-${product.id}'),
+                  onPressed: quantity >= product.stockQuantity
+                      ? null
+                      : () => _updateProductQuantity(
+                          product,
+                          (quantity + step).clamp(0, product.stockQuantity),
+                        ),
+                  icon: const Icon(Icons.add_shopping_cart, size: 18),
+                  label: Text(
+                    product.stockQuantity <= 0
+                        ? 'نفد المخزون'
+                        : quantity >= product.stockQuantity
+                        ? 'الكمية المتاحة بالسلة'
+                        : 'إضافة للسلة',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  Widget _photoCardContent(ProductModel product, Widget body) {
+    final image = _buildProductImage(product.imageUrl);
+    return image == null ? body : ProductPhotoBody(image: image, body: body);
+  }
+
+  final _productSearch = TextEditingController();
+
+  Widget _buildProductsArea() => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _productSearch,
+                onChanged: (value) {
+                  _searchDebounce?.cancel();
+                  _searchDebounce = Timer(
+                    const Duration(milliseconds: 400),
+                    () {
+                      if (!mounted) return;
+                      _searchQuery = value;
+                      _loadProducts();
+                    },
+                  );
+                },
+                decoration: InputDecoration(
+                  hintText: 'ابحث عن منتج أو تصنيف',
+                  prefixIcon: const Icon(Icons.search),
+                  filled: true,
+                  fillColor: AppColors.background,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            if (appPermissions.canManageProducts) ...[
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: 'إضافة منتج',
+                onPressed: _showAddProductDialog,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+            IconButton(
+              tooltip: 'تحديث المنتجات',
+              onPressed: _loadProducts,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+      ),
+      Expanded(
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _products.isEmpty
+            ? _emptyState(
+                Icons.inventory_2_outlined,
+                'لا توجد منتجات مطابقة حالياً',
+              )
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final columns = (constraints.maxWidth / 300).floor().clamp(
+                    1,
+                    6,
+                  );
+                  return SingleChildScrollView(
+                    key: const PageStorageKey('pos-products'),
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: ProductMasonry(
+                      columns: columns,
+                      children: _products.map(_buildProductCard).toList(),
                     ),
                   );
                 },
-                icon: const Icon(Icons.shopping_cart, color: Colors.white),
-                label: Text(
-                  '${cart.length} منتجات - ${totalFinalAmount.toStringAsFixed(0)} د.ع',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+              ),
+      ),
+    ],
+  );
+
+  Widget _buildCartArea() => AnimatedBuilder(
+    animation: Listenable.merge([_cartNotifier, _globalDiscountNotifier]),
+    builder: (context, _) {
+      final cost = _cart.fold(0.0, (sum, item) => sum + item.totalPurchaseCost);
+      final selling = _cart.fold(
+        0.0,
+        (sum, item) => sum + item.totalSellingAmount,
+      );
+      final discount =
+          _cart.fold(0.0, (sum, item) => sum + item.totalDiscountAmount) +
+          _globalDiscount;
+      final total = selling - discount;
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.shopping_bag_outlined,
+                  color: AppColors.primaryLight,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _activeTable == null
+                        ? 'تفاصيل الطلب والسلة'
+                        : 'طلب ${_activeTable!['name']}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-              );
-            },
-          );
-        },
-      ),
-      body: Directionality(
-        textDirection: TextDirection.rtl,
+                if (_cart.isNotEmpty)
+                  TextButton(
+                    onPressed: () {
+                      _cartNotifier.value = [];
+                      _cardQuantitiesNotifier.value = {};
+                      _globalDiscount = 0;
+                      _customTotalSellingPrice = null;
+                      _debouncedSaveTableOrder();
+                    },
+                    child: const Text(
+                      'مسح',
+                      style: TextStyle(color: AppColors.danger),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: AppColors.border),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, area) => Column(
+                children: [
+                  Expanded(
+                    child: CustomScrollView(
+                      key: const PageStorageKey('pos-cart'),
+                      slivers: [
+                        if (_cart.isEmpty)
+                          SliverToBoxAdapter(
+                            child: _emptyState(
+                              Icons.shopping_bag_outlined,
+                              'السلة فارغة\nاختر منتجات لإضافتها إلى الطلب',
+                            ),
+                          ),
+                        SliverPadding(
+                          padding: const EdgeInsets.all(10),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate((
+                              context,
+                              index,
+                            ) {
+                              final item = _cart[index];
+                              return CartItemWidget(
+                                key: ValueKey('cart-${item.product.id}'),
+                                item: item,
+                                onUpdate: () {
+                                  _cartNotifier.value = List.from(_cart);
+                                  _debouncedSaveTableOrder();
+                                },
+                                onUpdateQuantity: _updateProductQuantity,
+                              );
+                            }, childCount: _cart.length),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ConstrainedBox(
+                    key: const ValueKey('pinned-cart-summary'),
+                    constraints: BoxConstraints(
+                      maxHeight: area.maxHeight * .58,
+                    ),
+                    child: SingleChildScrollView(
+                      key: const PageStorageKey('cart-summary-scroll'),
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                      child: CartSummaryWidget(
+                        totalCostSum: cost,
+                        totalSellingSum: selling,
+                        totalDiscountSum: discount,
+                        totalFinalAmount: total,
+                        totalNetProfitSum: total - cost,
+                        totalItems: _cart.length,
+                        canViewPurchasePrice:
+                            appPermissions.canViewPurchasePrice,
+                        canViewProfit: appPermissions.canViewProfit,
+                        onUpdateTotalSelling: (value) {
+                          _updateCartFinalTotal(value);
+                          _debouncedSaveTableOrder();
+                        },
+                        onUpdateTotalDiscount: (value) {
+                          _updateCartTotalDiscount(value);
+                          _debouncedSaveTableOrder();
+                        },
+                        onUpdateFinalTotal: (value) {
+                          _updateCartFinalTotal(value);
+                          _debouncedSaveTableOrder();
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border(top: BorderSide(color: AppColors.border)),
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const ValueKey('checkout'),
+                onPressed: _cart.isEmpty ? null : _completeCheckout,
+                icon: const Icon(Icons.check_circle_outline),
+                label: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Text(
+                    'إكمال الطلب • ${total.toStringAsFixed(0)} د.ع',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+
+  Widget _sectionTabs(bool compact) =>
+      ValueListenableBuilder<List<CartItemModel>>(
+        valueListenable: _cartNotifier,
+        builder: (context, cart, _) => _panel(
+          Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                for (final section in [
+                  (0, Icons.grid_view_rounded, 'المنتجات'),
+                  (1, Icons.table_restaurant_outlined, 'الطاولات'),
+                  if (compact)
+                    (2, Icons.shopping_bag_outlined, 'السلة (${cart.length})'),
+                ])
+                  Expanded(
+                    child: TextButton(
+                      key: ValueKey('pos-section-${section.$1}'),
+                      onPressed: () => _selectSection(section.$1),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 12,
+                        ),
+                        backgroundColor:
+                            (_selectedTabIndex == section.$1 ||
+                                !compact &&
+                                    _selectedTabIndex == 2 &&
+                                    section.$1 == 0)
+                            ? AppColors.primaryLight.withValues(alpha: .10)
+                            : Colors.transparent,
+                        foregroundColor: AppColors.textPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            section.$2,
+                            size: 18,
+                            color: AppColors.primaryLight,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              section.$3,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) => Directionality(
+    textDirection: TextDirection.rtl,
+    child: Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        top: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            bool isMobile = constraints.maxWidth < 800;
-            if (isMobile) {
-              return buildProductsArea();
-            } else {
-              return Row(
-                children: [
-                  Expanded(flex: 75, child: buildProductsArea()),
-                  SizedBox(width: 410, child: buildCartArea()),
-                ],
-              );
-            }
+            final compact = constraints.maxWidth < 1100;
+            return Stack(
+              children: [
+                Padding(
+                  padding: EdgeInsets.all(compact ? 10 : 22),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (!compact) ...[
+                        Text(
+                          'المبيعات والطاولات',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'إدارة المنتجات والطلبات وحساب الطاولات من مكان واحد',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      if (_activeTable != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _panel(
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.table_restaurant_outlined,
+                                    color: AppColors.primaryLight,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'طلب ${_activeTable!['name']}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: _returnToTables,
+                                    icon: const Icon(
+                                      Icons.arrow_back,
+                                      size: 18,
+                                    ),
+                                    label: const Text('حفظ ورجوع'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      _sectionTabs(compact),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: compact
+                            ? IndexedStack(
+                                index: _selectedTabIndex,
+                                children: [
+                                  _panel(_buildProductsArea()),
+                                  _panel(_buildTablesGrid()),
+                                  _panel(_buildCartArea()),
+                                ],
+                              )
+                            : Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: _panel(
+                                      IndexedStack(
+                                        index: _selectedTabIndex == 1 ? 1 : 0,
+                                        children: [
+                                          _buildProductsArea(),
+                                          _buildTablesGrid(),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  SizedBox(
+                                    width: 390,
+                                    child: _panel(_buildCartArea()),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_busy)
+                  Positioned.fill(
+                    child: AbsorbPointer(
+                      child: ColoredBox(
+                        color: AppColors.surface.withValues(alpha: .8),
+                        child: const Center(child: CircularProgressIndicator()),
+                      ),
+                    ),
+                  ),
+              ],
+            );
           },
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class CartSummaryWidget extends StatefulWidget {
@@ -2904,8 +2715,10 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
             const SizedBox(height: 12),
 
             // Total Selling Display
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 6,
               children: [
                 Text(
                   'السعر الكلي:',
@@ -2928,8 +2741,10 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
             if (widget.totalDiscountSum > 0)
               Padding(
                 padding: const EdgeInsets.only(top: 8.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 12,
+                  runSpacing: 6,
                   children: [
                     const Text(
                       'الخصم الكلي:',
@@ -2951,8 +2766,10 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               ),
 
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 6,
               children: [
                 Text(
                   'السعر النهائي للطلب:',
@@ -2999,8 +2816,10 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
               const SizedBox(height: 12),
 
               if (widget.canViewPurchasePrice) ...[
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 12,
+                  runSpacing: 6,
                   children: [
                     Text(
                       'مجموع سعر الشراء:',
@@ -3160,9 +2979,9 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.remove_circle,
-                      color: Colors.white,
+                      color: AppColors.primaryLight,
                       size: 20,
                     ),
                     onPressed: () => widget.onUpdateFinalTotal(
@@ -3195,9 +3014,9 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.add_circle,
-                      color: Colors.white,
+                      color: AppColors.primaryLight,
                       size: 20,
                     ),
                     onPressed: () => widget.onUpdateFinalTotal(
@@ -3210,8 +3029,10 @@ class _CartSummaryWidgetState extends State<CartSummaryWidget> {
 
               if (widget.canViewProfit) ...[
                 Divider(color: AppColors.border, height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 12,
+                  runSpacing: 6,
                   children: [
                     const Text(
                       'مجموع صافي الربح:',
@@ -3431,8 +3252,10 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             const SizedBox(height: 12),
 
             // Total Price Text
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 6,
               children: [
                 Text(
                   'المبلغ:',
@@ -3456,8 +3279,10 @@ class _CartItemWidgetState extends State<CartItemWidget> {
             if (widget.item.totalDiscountAmount > 0)
               Padding(
                 padding: const EdgeInsets.only(top: 4.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  spacing: 12,
+                  runSpacing: 6,
                   children: [
                     const Text(
                       'مجموع الخصم:',
@@ -3479,8 +3304,10 @@ class _CartItemWidgetState extends State<CartItemWidget> {
               ),
 
             const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 12,
+              runSpacing: 6,
               children: [
                 Text(
                   'السعر النهائي:',
@@ -3540,18 +3367,20 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                       'الكمية: ${widget.item.quantity}',
                       style: TextStyle(color: AppColors.textGray),
                     ),
-                    Text(
-                      'شراء: ${widget.item.unitPurchasePrice.toStringAsFixed(0)} د.ع',
-                      style: TextStyle(color: AppColors.textGray),
-                    ),
+                    if (appPermissions.canViewPurchasePrice)
+                      Text(
+                        'شراء: ${widget.item.unitPurchasePrice.toStringAsFixed(0)} د.ع',
+                        style: TextStyle(color: AppColors.textGray),
+                      ),
                     Text(
                       'بيع: ${widget.item.unitSellingPrice.toStringAsFixed(0)} د.ع',
                       style: TextStyle(color: AppColors.primaryLight),
                     ),
-                    Text(
-                      'كلفة الشراء: ${widget.item.totalPurchaseCost.toStringAsFixed(0)} د.ع',
-                      style: TextStyle(color: AppColors.textGray),
-                    ),
+                    if (appPermissions.canViewPurchasePrice)
+                      Text(
+                        'كلفة الشراء: ${widget.item.totalPurchaseCost.toStringAsFixed(0)} د.ع',
+                        style: TextStyle(color: AppColors.textGray),
+                      ),
                     Text(
                       'الخصم: ${widget.item.totalDiscountAmount.toStringAsFixed(0)} د.ع',
                       style: TextStyle(color: AppColors.warning),
@@ -3563,13 +3392,14 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(
-                      'الربح: ${widget.item.netProfit.toStringAsFixed(0)} د.ع',
-                      style: TextStyle(
-                        color: AppColors.historyIcon,
-                        fontWeight: FontWeight.bold,
+                    if (appPermissions.canViewProfit)
+                      Text(
+                        'الربح: ${widget.item.netProfit.toStringAsFixed(0)} د.ع',
+                        style: TextStyle(
+                          color: AppColors.historyIcon,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -3580,7 +3410,7 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                   const SizedBox(
                     width: 80,
                     child: Text(
-                      'خصم القطعة:',
+                      'خصم الوحدة:',
                       style: TextStyle(
                         color: AppColors.warning,
                         fontSize: AppSizes.fontNormal,
@@ -3726,9 +3556,9 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.remove,
-                      color: Colors.white,
+                      color: AppColors.primaryLight,
                       size: 18,
                     ),
                     onPressed: () {
@@ -3766,7 +3596,11 @@ class _CartItemWidgetState extends State<CartItemWidget> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.add, color: Colors.white, size: 18),
+                    icon: Icon(
+                      Icons.add,
+                      color: AppColors.primaryLight,
+                      size: 18,
+                    ),
                     onPressed: () {
                       widget.item.totalPrice += 250;
                       widget.onUpdate();

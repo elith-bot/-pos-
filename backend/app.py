@@ -1,7 +1,7 @@
 import os
 import random
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy.exc import OperationalError
@@ -10,17 +10,45 @@ from config import Config
 from models import db, User, OTPCode, Product, Sale, SaleItem, Expense, RestockHistory, Table, ActiveOrder, ActiveOrderItem
 from core_system import core
 import actions
+from security import install_security, issue_session, manageable, revoke, failure
+from transactions import create_sale_transaction, save_table_transaction
+from transactions import number
+from hr_finance import install_hr_finance
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
+    if test_config:
+        app.config.update(test_config)
 
     CORS(app)
     db.init_app(app)
+    install_security(app)
+    install_hr_finance(app)
 
     with app.app_context():
         try:
             db.create_all()
+            for statement in [
+                'ALTER TABLE hr_staff ADD COLUMN user_id INTEGER REFERENCES users(id)',
+                'CREATE UNIQUE INDEX IF NOT EXISTS ix_hr_staff_user ON hr_staff (user_id)',
+                "ALTER TABLE hr_payroll ADD COLUMN calculation TEXT DEFAULT '{}'",
+                "ALTER TABLE expenses ADD COLUMN source VARCHAR(20) DEFAULT 'manual'",
+                'ALTER TABLE expenses ADD COLUMN source_key VARCHAR(100)',
+                'CREATE UNIQUE INDEX IF NOT EXISTS ix_expenses_source_key ON expenses (source_key)',
+                'ALTER TABLE active_orders ADD COLUMN cart_state TEXT',
+                'ALTER TABLE sales ADD COLUMN checkout_key VARCHAR(80)',
+                'ALTER TABLE sales ADD COLUMN order_type VARCHAR(20)',
+                'ALTER TABLE sales ADD COLUMN table_name VARCHAR(50)',
+                'ALTER TABLE sale_items ADD COLUMN is_weight BOOLEAN',
+                'ALTER TABLE sale_items ADD COLUMN weight_unit_grams INTEGER',
+                'CREATE UNIQUE INDEX IF NOT EXISTS ix_sales_checkout_key ON sales (checkout_key)',
+            ]:
+                try:
+                    db.session.execute(db.text(statement))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
             
             # Simple migration to add columns if they don't exist
             try:
@@ -136,8 +164,8 @@ def create_app():
         password = data.get('password', '')
         full_name = data.get('full_name', '').strip()
 
-        if not username or not password or not full_name:
-            return jsonify({'status': 'error', 'message': 'جميع الحقول مطلوبة (اسم المستخدم، كلمة المرور، الاسم الكامل)'}), 400
+        if not username or len(password) < 8 or not full_name:
+            return jsonify({'status': 'error', 'message': 'الاسم واسم المستخدم مطلوبان وكلمة المرور 8 أحرف على الأقل'}), 400
 
         if User.query.filter_by(username=username).first():
             return jsonify({'status': 'error', 'message': 'اسم المستخدم مسجل مسبقاً'}), 400
@@ -175,6 +203,7 @@ def create_app():
         return jsonify({
             'status': 'success',
             'message': 'تم تسجيل الدخول بنجاح',
+            'token': issue_session(user),
             'user': user.to_dict()
         })
 
@@ -238,6 +267,9 @@ def create_app():
         if not user:
             return jsonify({'status': 'error', 'message': 'المستخدم غير موجود'}), 404
 
+        if not manageable(user, new_role):
+            return failure('لا يمكنك تعديل حسابك أو إدارة دور مساوٍ أو أعلى من دورك.')
+        revoke(user.id)
         user.role = new_role
         db.session.commit()
         return jsonify({'status': 'success', 'message': f'تم تغيير دور المستخدم إلى {new_role}', 'user': user.to_dict()})
@@ -248,6 +280,9 @@ def create_app():
         if not user:
             return jsonify({'status': 'error', 'message': 'المستخدم غير موجود'}), 404
 
+        if not manageable(user):
+            return failure('لا يمكنك تعطيل حسابك أو إدارة دور مساوٍ أو أعلى من دورك.')
+        revoke(user.id)
         user.is_active = not user.is_active
         db.session.commit()
         return jsonify({'status': 'success', 'message': 'تم تغيير حالة الحساب', 'user': user.to_dict()})
@@ -316,7 +351,8 @@ def create_app():
         if product.stock_quantity > 0 and product.purchase_price > 0:
             expense = Expense(
                 title=f'رصيد بضاعة أولي: {product.name}',
-                amount=product.stock_quantity * product.purchase_price,
+                amount=round(product.stock_quantity / (product.weight_unit_grams if product.is_weight and product.weight_unit_grams > 0 else 1) * product.purchase_price, 2),
+                source='inventory',
                 category='مشتريات/بضاعة',
                 notes=f'رصيد أولي لعدد {product.stock_quantity}',
                 created_by='النظام'
@@ -359,7 +395,13 @@ def create_app():
             return jsonify({'status': 'error', 'message': 'المنتج غير موجود'}), 404
 
         data = request.get_json() or {}
-        added_qty = float(data.get('added_quantity', 0))
+        try:
+            added_qty = number(data.get('added_quantity', 0))
+            for key in ['purchase_price', 'selling_price']:
+                if data.get(key) is not None and number(data[key]) < 0:
+                    raise ValueError('الأسعار لا يمكن أن تكون سالبة.')
+        except ValueError as error:
+            return failure(str(error), 400)
         new_purchase_price = data.get('purchase_price')
         new_selling_price = data.get('selling_price')
 
@@ -382,7 +424,8 @@ def create_app():
         
         expense = Expense(
             title=f'توريد بضاعة: {product.name}',
-            amount=added_qty * product.purchase_price,
+            amount=round(added_qty / (product.weight_unit_grams if product.is_weight and product.weight_unit_grams > 0 else 1) * product.purchase_price, 2),
+            source='inventory',
             category='مشتريات/بضاعة',
             notes=f'توريد عدد {added_qty}',
             created_by='النظام'
@@ -434,89 +477,8 @@ def create_app():
     # ================= SALES & POS APIs =================
     @app.route('/api/sales', methods=['POST'])
     def create_sale():
-        data = request.get_json() or {}
-        cart_items = data.get('items', [])
-        cashier_name = data.get('cashier_name', 'كاشير')
-        cashier_id = data.get('cashier_id')
-        payment_method = data.get('payment_method', 'نقداً')
-        global_discount = float(data.get('global_discount', 0.0))
+        return create_sale_transaction()
 
-        table_id = data.get('table_id')
-
-        if not cart_items:
-            return jsonify({'status': 'error', 'message': 'السلة فارغة'}), 400
-
-        total_purchase_cost = 0.0
-        total_selling_amount = 0.0
-        total_discount = 0.0
-        net_profit = 0.0
-
-        sale_items_to_add = []
-
-        for item_data in cart_items:
-            product_id = item_data.get('product_id')
-            qty = float(item_data.get('quantity', 1))
-            unit_purchase = float(item_data.get('unit_purchase_price', 0))
-            unit_selling = float(item_data.get('unit_selling_price', 0))
-            discount = float(item_data.get('discount', 0)) # Can be negative
-
-            item_total = (unit_selling - discount) * qty
-            item_cost = unit_purchase * qty
-            item_profit = item_total - item_cost
-
-            total_purchase_cost += item_cost
-            total_selling_amount += unit_selling * qty
-            total_discount += discount * qty
-            net_profit += item_profit
-
-            # Update product stock
-            if product_id:
-                product = Product.query.get(product_id)
-                if product:
-                    product.stock_quantity = max(0, product.stock_quantity - qty)
-
-            sale_items_to_add.append(SaleItem(
-                product_id=product_id,
-                product_name=item_data.get('product_name', 'منتج'),
-                quantity=qty,
-                unit_purchase_price=unit_purchase,
-                unit_selling_price=unit_selling,
-                discount=discount,
-                total_price=item_total,
-                profit=item_profit
-            ))
-
-        total_discount += global_discount
-        net_profit -= global_discount
-
-        sale = Sale(
-            cashier_id=cashier_id,
-            cashier_name=cashier_name,
-            total_purchase_cost=total_purchase_cost,
-            total_selling_amount=total_selling_amount,
-            total_discount=total_discount,
-            net_profit=net_profit,
-            payment_method=payment_method
-        )
-        db.session.add(sale)
-        db.session.flush()
-
-        for s_item in sale_items_to_add:
-            s_item.sale_id = sale.id
-            db.session.add(s_item)
-
-        # Handle Table Checkout
-        if table_id:
-            table = Table.query.get(table_id)
-            if table:
-                active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
-                if active_order:
-                    db.session.delete(active_order)
-                table.is_active = False
-
-        db.session.commit()
-
-        return jsonify({'status': 'success', 'message': 'تم إكمال عملية البيع بنجاح', 'sale': sale.to_dict()}), 201
     def _filter_sales_and_expenses(args):
         period = (args.get('period') or 'all').lower().strip()
         start_date_str = args.get('start_date')
@@ -694,57 +656,7 @@ def create_app():
 
     @app.route('/api/tables/<int:table_id>/order', methods=['POST'])
     def save_table_order(table_id):
-        table = Table.query.get(table_id)
-        if not table:
-            return jsonify({'status': 'error', 'message': 'الطاولة غير موجودة'}), 404
-            
-        data = request.get_json() or {}
-        cart_items = data.get('items', [])
-        cashier_id = data.get('cashier_id')
-        
-        if not cart_items:
-            active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
-            if active_order:
-                db.session.delete(active_order)
-                table.is_active = False
-                db.session.commit()
-            return jsonify({'status': 'success', 'message': 'تم مسح الطلب وجعل الطاولة متاحة'})
-            
-        active_order = ActiveOrder.query.filter_by(table_id=table_id).first()
-        if not active_order:
-            active_order = ActiveOrder(table_id=table_id, cashier_id=cashier_id)
-            db.session.add(active_order)
-            db.session.flush()
-        else:
-            ActiveOrderItem.query.filter_by(active_order_id=active_order.id).delete()
-            active_order.cashier_id = cashier_id
-            
-        total_amount = 0.0
-        
-        for item_data in cart_items:
-            product_id = item_data.get('product_id')
-            qty = float(item_data.get('quantity', 1))
-            unit_selling = float(item_data.get('unit_selling_price', 0))
-            discount = float(item_data.get('discount', 0))
-            
-            item_total = (unit_selling - discount) * qty
-            total_amount += item_total
-            
-            order_item = ActiveOrderItem(
-                active_order_id=active_order.id,
-                product_id=product_id,
-                product_name=item_data.get('product_name', 'منتج'),
-                quantity=qty,
-                unit_price=unit_selling - discount,
-                total_price=item_total
-            )
-            db.session.add(order_item)
-            
-        active_order.total_amount = total_amount
-        table.is_active = True
-        
-        db.session.commit()
-        return jsonify({'status': 'success', 'message': 'تم حفظ طلب الطاولة بنجاح', 'order': active_order.to_dict()})
+        return save_table_transaction(table_id)
 
     # ================= EXPENSES APIs =================
     @app.route('/api/expenses', methods=['GET'])
@@ -757,7 +669,10 @@ def create_app():
     def create_expense():
         data = request.get_json() or {}
         title = data.get('title', '').strip()
-        amount = float(data.get('amount', 0))
+        try:
+            amount = number(data.get('amount', 0))
+        except ValueError as error:
+            return failure(str(error), 400)
 
         if not title or amount <= 0:
             return jsonify({'status': 'error', 'message': 'العنوان والمبلغ الجاري مطلوبان'}), 400
@@ -767,7 +682,7 @@ def create_app():
             amount=amount,
             category=data.get('category', 'عام'),
             notes=data.get('notes', ''),
-            created_by=data.get('created_by', 'المدير')
+            created_by=g.current_user.full_name
         )
         db.session.add(expense)
         db.session.commit()
@@ -779,9 +694,32 @@ def create_app():
         exp = Expense.query.get(expense_id)
         if not exp:
             return jsonify({'status': 'error', 'message': 'المصروف غير موجود'}), 404
+        if exp.source in ['payroll', 'fixed', 'inventory'] or exp.category == 'مشتريات/بضاعة':
+            return failure('مصروف مرتبط بسجل مالي؛ لا يمكن حذفه من المصاريف.', 409)
         db.session.delete(exp)
         db.session.commit()
         return jsonify({'status': 'success', 'message': 'تم حذف المصروف بنجاح'})
+
+    @app.put('/api/expenses/<int:expense_id>')
+    def update_expense(expense_id):
+        expense = db.session.get(Expense, expense_id)
+        if not expense: return failure('المصروف غير موجود.', 404)
+        if expense.source in ['payroll', 'fixed', 'inventory'] or expense.category == 'مشتريات/بضاعة':
+            return failure('السجل مرتبط بعملية مالية ولا يُعدل من هنا.', 409)
+        d = request.get_json() or {}
+        try:
+            amount = number(d.get('amount', expense.amount))
+            title = str(d.get('title', expense.title)).strip()
+            category = str(d.get('category', expense.category)).strip()
+            if amount <= 0 or not title or len(title) > 150 or len(category) > 80:
+                raise ValueError('تحقق من العنوان والمبلغ والتصنيف.')
+            if category == 'مشتريات/بضاعة': raise ValueError('سجّل توريد البضاعة من صفحة المنتجات.')
+            expense.title, expense.amount, expense.category = title, round(amount, 2), category or 'عام'
+            expense.notes = str(d.get('notes', expense.notes))[:255]
+            db.session.commit()
+            return jsonify(expense=expense.to_dict())
+        except ValueError as error:
+            return failure(str(error), 400)
 
     # ================= ANALYTICS APIs =================
     @app.route('/api/stats', methods=['GET'])
@@ -794,7 +732,14 @@ def create_app():
         total_revenue = sum(s.total_selling_amount - s.total_discount for s in all_sales)
         total_cost = sum(s.total_purchase_cost for s in all_sales)
         gross_profit = sum(s.net_profit for s in all_sales)
-        total_expenses = sum(e.amount for e in all_expenses)
+        inventory_expenses = [e for e in all_expenses if e.source == 'inventory' or e.category == 'مشتريات/بضاعة']
+        operating_expenses = [e for e in all_expenses if e not in inventory_expenses]
+        total_supply = sum(e.amount for e in inventory_expenses)
+        total_expenses = sum(e.amount for e in operating_expenses)
+        expense_categories = {}
+        for e in operating_expenses:
+            category = e.category or 'عام'
+            expense_categories[category] = expense_categories.get(category, 0) + e.amount
         final_net_profit = gross_profit - total_expenses
         avg_order_value = (total_revenue / total_sales_count) if total_sales_count > 0 else 0.0
         profit_margin = ((gross_profit / total_revenue) * 100) if total_revenue > 0 else 0.0
@@ -899,6 +844,15 @@ def create_app():
                 'total_discount': round(total_discount, 2),
                 'gross_profit': round(gross_profit, 2),
                 'total_expenses': round(total_expenses, 2),
+                'total_supply': round(total_supply, 2),
+                'total_outflows': round(total_supply + total_expenses, 2),
+                'sales_less_outflows': round(total_revenue - total_supply - total_expenses, 2),
+                'profit': round(max(final_net_profit, 0), 2),
+                'loss': round(max(-final_net_profit, 0), 2),
+                'salary_expenses': round(expense_categories.get('رواتب', 0), 2),
+                'rent_expenses': round(expense_categories.get('إيجار', 0) + expense_categories.get('إيجارات', 0), 2),
+                'subscription_expenses': round(expense_categories.get('اشتراكات', 0), 2),
+                'fixed_expenses': round(sum(e.amount for e in operating_expenses if e.source == 'fixed'), 2),
                 'final_net_profit': round(final_net_profit, 2),
                 'average_order_value': round(avg_order_value, 2),
                 'profit_margin_pct': round(profit_margin, 1),
@@ -906,6 +860,8 @@ def create_app():
                 'total_products': total_products_count
             },
             'payment_methods': {k: {'amount': round(v['amount'], 2), 'count': v['count']} for k, v in pm_dict.items()},
+            'expense_categories': {k: round(v, 2) for k, v in expense_categories.items()},
+            'legacy_inventory_expenses': sum(1 for e in inventory_expenses if e.source != 'inventory'),
             'top_products': top_products,
             'timeline': timeline,
             'sales': sales_dicts
@@ -939,7 +895,7 @@ def create_app():
         with open(env_file, 'w', encoding='utf-8') as f:
             f.writelines(new_lines)
 
-        return jsonify({'status': 'success', 'message': f'تم تغيير نوع قاعدة البيانات إلى {new_type}', 'db_type': new_type})
+        return jsonify({'status': 'success', 'message': f'تم حفظ اختيار {new_type}. يلزم إعادة تشغيل السيرفر لتطبيقه؛ البيانات لا تُنقل تلقائياً', 'db_type': new_type})
 
 
     @app.route('/api/action/<action_name>', methods=['POST'])

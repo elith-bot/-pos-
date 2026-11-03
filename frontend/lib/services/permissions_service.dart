@@ -1,54 +1,33 @@
-import 'api_service.dart';
 import '../models/user_model.dart';
+import 'api_service.dart';
 
-/// كلاس إدارة الصلاحيات (Permissions Service)
-/// هذا الكلاس سيمثل الهيكلية الأساسية التي يمكننا تطويرها مستقبلاً 
-/// لتشمل صلاحيات مخصصة لكل مستخدم أو مجموعات (Roles).
 class PermissionsService {
-  // تطبيق نمط Singleton ليكون متاحاً في كل مكان في التطبيق بنفس النسخة
-  static final PermissionsService _instance = PermissionsService._internal();
-  factory PermissionsService() => _instance;
-  PermissionsService._internal();
-
-  /// الحصول على دور المستخدم الحالي (افتراضياً كاشير إذا لم يكن مسجلاً)
-  String get currentRole => ApiService.currentUser?.role ?? 'cashier';
-
-  // ==========================================
-  // إعدادات الصلاحيات (Permissions Definitions)
-  // ==========================================
-
-  // 1. هل يمكنه رؤية سعر الشراء؟
-  bool get canViewPurchasePrice {
-    // مستقبلاً يمكننا التحقق من صلاحيات مخصصة للمستخدم نفسه (_currentUser.customPermissions)
-    // حالياً نعتمد على الدور (Role Groups)
-    return ['developer', 'owner', 'admin'].contains(currentRole);
-  }
-
-  // 2. هل يمكنه رؤية الأرباح الصافية؟
-  bool get canViewProfit {
-    return ['developer', 'owner', 'admin'].contains(currentRole);
-  }
-
-  // 3. هل يمكنه رؤية سعر البيع؟
-  bool get canViewSellingPrice {
-    return true; // متاح للجميع عادة
-  }
-
-  // 4. هل يمكنه رؤية الخصم وتطبيقه؟
-  bool get canViewDiscount {
-    return true; // الكاشير يحتاج رؤية الخصم
-  }
-
-  // 5. هل يمكنه تعديل وحذف المنتجات؟
-  bool get canManageProducts {
-    return ['developer', 'owner', 'admin'].contains(currentRole);
-  }
-  
-  // 6. هل يمكنه رؤية الإحصائيات العامة للمبيعات؟
-  bool get canViewGeneralStats {
-    return ['developer', 'owner', 'admin'].contains(currentRole);
-  }
+  static const roles = {
+    'cashier': 'كاشير',
+    'admin': 'مدير',
+    'owner': 'مالك',
+    'developer': 'مطور',
+  };
+  static const ranks = {'cashier': 0, 'admin': 1, 'owner': 2, 'developer': 3};
+  String get currentRole => ApiService.currentUser?.role ?? '';
+  bool get isActive => ApiService.currentUser?.isActive == true;
+  bool get canManageProducts => isActive && (ranks[currentRole] ?? -1) >= 1;
+  bool get canManageExpenses => canManageProducts;
+  bool get canManageEmployees => canManageProducts;
+  bool get canManageHR => isActive && (ranks[currentRole] ?? -1) >= 2;
+  bool get canViewGeneralStats => canManageProducts;
+  bool get canViewPurchasePrice => canManageProducts;
+  bool get canViewProfit => canManageProducts;
+  bool get canViewSellingPrice => isActive;
+  bool get canViewDiscount => isActive;
+  bool get canManageSettings => isActive && (ranks[currentRole] ?? -1) >= 2;
+  bool canManage(UserModel user) =>
+      isActive &&
+      user.id != ApiService.currentUser?.id &&
+      (ranks[currentRole] ?? -1) > (ranks[user.role] ?? 99);
+  List<String> get assignableRoles => roles.keys
+      .where((role) => (ranks[role] ?? 99) < (ranks[currentRole] ?? -1))
+      .toList();
 }
 
-// كائن عالمي (Global Object) يمكن استخدامه مباشرة في أي شاشة
 final appPermissions = PermissionsService();

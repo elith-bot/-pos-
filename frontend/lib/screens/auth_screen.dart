@@ -24,10 +24,12 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _submit() async {
     final username = _usernameController.text.trim();
-    final password = _passwordController.text.trim();
+    final password = _passwordController.text;
     final fullName = _fullNameController.text.trim();
 
-    if (username.isEmpty || password.isEmpty || (!_isLogin && fullName.isEmpty)) {
+    if (username.isEmpty ||
+        password.isEmpty ||
+        (!_isLogin && fullName.isEmpty)) {
       setState(() {
         _errorMessage = 'يرجى إدخال جميع البيانات المطلوبة';
       });
@@ -45,7 +47,10 @@ class _AuthScreenState extends State<AuthScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
         if (res['status'] == 'success' && ApiService.currentUser != null) {
-          await SessionService.saveSession(ApiService.currentUser!);
+          await SessionService.saveSession(
+            ApiService.currentUser!,
+            token: ApiService.authToken,
+          );
           if (mounted) {
             Navigator.pushReplacement(
               context,
@@ -65,7 +70,8 @@ class _AuthScreenState extends State<AuthScreen> {
         if (res['status'] == 'success') {
           setState(() {
             _isLogin = true;
-            _successMessage = 'تم إنشاء الحساب كـ "كاشير" بنجاح. يمكنك الآن تسجيل الدخول.';
+            _successMessage =
+                'تم إنشاء الحساب كـ "كاشير" بنجاح. يمكنك الآن تسجيل الدخول.';
           });
         } else {
           setState(() {
@@ -77,124 +83,19 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   void _showOtpResetDialog() {
-    final userCtrl = TextEditingController();
-    final otpCtrl = TextEditingController();
-    final newPassCtrl = TextEditingController();
-    bool codeSent = false;
-    String? dialogMsg;
-
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            backgroundColor: AppColors.surface,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Row(
-              children: [
-                Icon(Icons.lock_reset, color: AppColors.primaryLight),
-                const SizedBox(width: 8),
-                Text('نسيت كلمة المرور (OTP)', style: TextStyle(color: AppColors.textPrimary, fontSize: AppSizes.fontXLarge, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (dialogMsg != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryLight.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(dialogMsg!, style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal)),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  TextField(
-                    controller: userCtrl,
-                    style: TextStyle(color: AppColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'اسم المستخدم',
-                      labelStyle: TextStyle(color: AppColors.textGray),
-                      filled: true,
-                      fillColor: AppColors.background,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  if (!codeSent) ...[
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primarySolid),
-                      onPressed: () async {
-                        if (userCtrl.text.trim().isEmpty) return;
-                        final res = await ApiService.requestOtp(userCtrl.text.trim());
-                        setDialogState(() {
-                          if (res['status'] == 'success') {
-                            codeSent = true;
-                            dialogMsg = res['message'];
-                          } else {
-                            dialogMsg = res['message'] ?? 'خطأ في الطلب';
-                          }
-                        });
-                      },
-                      child: const Text('إرسال رمز OTP', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                  ] else ...[
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: otpCtrl,
-                      style: TextStyle(color: AppColors.textPrimary),
-                      decoration: InputDecoration(
-                        labelText: 'رمز التحقق (OTP 6-digits)',
-                        labelStyle: TextStyle(color: AppColors.textGray),
-                        filled: true,
-                        fillColor: AppColors.background,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: newPassCtrl,
-                      obscureText: true,
-                      style: TextStyle(color: AppColors.textPrimary),
-                      decoration: InputDecoration(
-                        labelText: 'كلمة المرور الجديدة',
-                        labelStyle: TextStyle(color: AppColors.textGray),
-                        filled: true,
-                        fillColor: AppColors.background,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-                      onPressed: () async {
-                        final res = await ApiService.resetPassword(
-                          userCtrl.text.trim(),
-                          otpCtrl.text.trim(),
-                          newPassCtrl.text.trim(),
-                        );
-                        if (res['status'] == 'success') {
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          setState(() {
-                            _successMessage = 'تم إعادة تعيين كلمة المرور بنجاح. سجل دخولك الآن.';
-                          });
-                        } else {
-                          setDialogState(() {
-                            dialogMsg = res['message'];
-                          });
-                        }
-                      },
-                      child: const Text('حفظ كلمة المرور الجديدة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          );
-        },
+      builder: (ctx) => AlertDialog(
+        title: const Text('استعادة الحساب'),
+        content: const Text(
+          'راجع الإدارة لإعادة تعيين كلمة المرور من صفحة الموظفين.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إغلاق'),
+          ),
+        ],
       ),
     );
   }
@@ -224,9 +125,13 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: IconButton(
                       icon: Icon(
                         isDark ? Icons.light_mode : Icons.dark_mode_outlined,
-                        color: isDark ? const Color(0xFFFBBF24) : AppColors.primaryLight,
+                        color: isDark
+                            ? const Color(0xFFFBBF24)
+                            : AppColors.primaryLight,
                       ),
-                      tooltip: isDark ? 'التحويل للوضع النهاري' : 'التحويل للوضع الليلي',
+                      tooltip: isDark
+                          ? 'التحويل للوضع النهاري'
+                          : 'التحويل للوضع الليلي',
                       onPressed: () {
                         ThemeService.toggleTheme();
                       },
@@ -262,9 +167,16 @@ class _AuthScreenState extends State<AuthScreen> {
                         decoration: BoxDecoration(
                           color: AppColors.background,
                           shape: BoxShape.circle,
-                          border: Border.all(color: AppColors.primaryLight, width: 2),
+                          border: Border.all(
+                            color: AppColors.primaryLight,
+                            width: 2,
+                          ),
                         ),
-                        child: Icon(Icons.storefront, size: 48, color: AppColors.primaryLight),
+                        child: Icon(
+                          Icons.storefront,
+                          size: 48,
+                          color: AppColors.primaryLight,
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -277,8 +189,13 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        _isLogin ? 'أدخل اسم المستخدم وكلمة المرور' : 'سيتم إنشاء الحساب بصفة كاشير افتراضياً',
-                        style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontMedium),
+                        _isLogin
+                            ? 'أدخل اسم المستخدم وكلمة المرور'
+                            : 'سيتم إنشاء الحساب بصفة كاشير افتراضياً',
+                        style: TextStyle(
+                          color: AppColors.textGray,
+                          fontSize: AppSizes.fontMedium,
+                        ),
                       ),
                       const SizedBox(height: 20),
 
@@ -290,9 +207,14 @@ class _AuthScreenState extends State<AuthScreen> {
                             color: AppColors.stockLowBg.withOpacity(0.5),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Text(_errorMessage!,
-                              style: TextStyle(color: AppColors.stockLowText, fontSize: AppSizes.fontMedium),
-                              textAlign: TextAlign.center),
+                          child: Text(
+                            _errorMessage!,
+                            style: TextStyle(
+                              color: AppColors.stockLowText,
+                              fontSize: AppSizes.fontMedium,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                         const SizedBox(height: 14),
                       ],
@@ -305,9 +227,14 @@ class _AuthScreenState extends State<AuthScreen> {
                             color: AppColors.stockHighBg.withOpacity(0.5),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Text(_successMessage!,
-                              style: TextStyle(color: AppColors.stockHighText, fontSize: AppSizes.fontMedium),
-                              textAlign: TextAlign.center),
+                          child: Text(
+                            _successMessage!,
+                            style: TextStyle(
+                              color: AppColors.stockHighText,
+                              fontSize: AppSizes.fontMedium,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                         const SizedBox(height: 14),
                       ],
@@ -318,11 +245,16 @@ class _AuthScreenState extends State<AuthScreen> {
                           style: TextStyle(color: AppColors.textPrimary),
                           decoration: InputDecoration(
                             labelText: 'الاسم الكامل',
-                            prefixIcon: Icon(Icons.person, color: AppColors.primaryLight),
+                            prefixIcon: Icon(
+                              Icons.person,
+                              color: AppColors.primaryLight,
+                            ),
                             labelStyle: TextStyle(color: AppColors.textGray),
                             filled: true,
                             fillColor: AppColors.background,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 14),
@@ -333,11 +265,16 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: TextStyle(color: AppColors.textPrimary),
                         decoration: InputDecoration(
                           labelText: 'اسم المستخدم',
-                          prefixIcon: Icon(Icons.account_circle, color: AppColors.primaryLight),
+                          prefixIcon: Icon(
+                            Icons.account_circle,
+                            color: AppColors.primaryLight,
+                          ),
                           labelStyle: TextStyle(color: AppColors.textGray),
                           filled: true,
                           fillColor: AppColors.background,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 14),
@@ -348,11 +285,16 @@ class _AuthScreenState extends State<AuthScreen> {
                         style: TextStyle(color: AppColors.textPrimary),
                         decoration: InputDecoration(
                           labelText: 'كلمة المرور',
-                          prefixIcon: Icon(Icons.lock, color: AppColors.primaryLight),
+                          prefixIcon: Icon(
+                            Icons.lock,
+                            color: AppColors.primaryLight,
+                          ),
                           labelStyle: TextStyle(color: AppColors.textGray),
                           filled: true,
                           fillColor: AppColors.background,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                       ),
 
@@ -361,8 +303,13 @@ class _AuthScreenState extends State<AuthScreen> {
                           alignment: Alignment.centerLeft,
                           child: TextButton(
                             onPressed: _showOtpResetDialog,
-                            child: Text('نسيت كلمة المرور؟ (OTP)',
-                                style: TextStyle(color: AppColors.primaryLight, fontSize: AppSizes.fontNormal)),
+                            child: Text(
+                              'نسيت كلمة المرور؟',
+                              style: TextStyle(
+                                color: AppColors.primaryLight,
+                                fontSize: AppSizes.fontNormal,
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -374,14 +321,22 @@ class _AuthScreenState extends State<AuthScreen> {
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primarySolid,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                           onPressed: _isLoading ? null : _submit,
                           child: _isLoading
-                              ? const CircularProgressIndicator(color: Colors.white)
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white,
+                                )
                               : Text(
                                   _isLogin ? 'تسجيل الدخول' : 'إنشاء الحساب',
-                                  style: const TextStyle(color: Colors.white, fontSize: AppSizes.fontHeader, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: AppSizes.fontHeader,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                         ),
                       ),
@@ -390,14 +345,20 @@ class _AuthScreenState extends State<AuthScreen> {
                       TextButton(
                         onPressed: () {
                           setState(() {
-                            _isLogin = !_isLogin;
+                            _isLogin = true;
+                            _successMessage =
+                                'إضافة الحسابات تتم بواسطة الإدارة من صفحة الموظفين.';
                             _errorMessage = null;
-                            _successMessage = null;
                           });
                         },
                         child: Text(
-                          _isLogin ? 'ليس لديك حساب؟ أنشئ حساباً جديداً' : 'لديك حساب بالفعل؟ سجل دخولك',
-                          style: TextStyle(color: AppColors.textGray, fontSize: AppSizes.fontMedium),
+                          _isLogin
+                              ? 'إنشاء حساب عبر الإدارة'
+                              : 'لديك حساب بالفعل؟ سجل دخولك',
+                          style: TextStyle(
+                            color: AppColors.textGray,
+                            fontSize: AppSizes.fontMedium,
+                          ),
                         ),
                       ),
                     ],

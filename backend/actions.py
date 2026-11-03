@@ -10,9 +10,7 @@ def get_tables():
         if t.is_active:
             order = ActiveOrder.query.filter_by(table_id=t.id).first()
             if order:
-                items = ActiveOrderItem.query.filter_by(active_order_id=order.id).all()
-                for i in items:
-                    total_price += (i.unit_price * i.quantity)
+                total_price = order.total_amount
         result.append({
             'id': t.id,
             'table_number': t.table_number,

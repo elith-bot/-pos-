@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import json
 
 db = SQLAlchemy()
 
@@ -23,6 +24,13 @@ class User(db.Model):
             'is_active': self.is_active,
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else ''
         }
+
+class AuthSession(db.Model):
+    __tablename__ = 'auth_sessions'
+    token_hash = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
 
 class OTPCode(db.Model):
     __tablename__ = 'otp_codes'
@@ -74,6 +82,9 @@ class Sale(db.Model):
     __tablename__ = 'sales'
 
     id = db.Column(db.Integer, primary_key=True)
+    checkout_key = db.Column(db.String(80), unique=True, nullable=True)
+    order_type = db.Column(db.String(20), nullable=True)
+    table_name = db.Column(db.String(50), nullable=True)
     cashier_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     cashier_name = db.Column(db.String(120), default='كاشير')
     total_purchase_cost = db.Column(db.Float, default=0.0)
@@ -89,6 +100,8 @@ class Sale(db.Model):
         return {
             'id': self.id,
             'cashier_id': self.cashier_id,
+            'order_type': self.order_type,
+            'table_name': self.table_name,
             'cashier_name': self.cashier_name,
             'total_purchase_cost': round(self.total_purchase_cost, 2),
             'total_selling_amount': round(self.total_selling_amount, 2),
@@ -107,6 +120,8 @@ class SaleItem(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=True)
     product_name = db.Column(db.String(150), nullable=False)
     quantity = db.Column(db.Float, default=1.0)
+    is_weight = db.Column(db.Boolean, nullable=True)
+    weight_unit_grams = db.Column(db.Integer, nullable=True)
     unit_purchase_price = db.Column(db.Float, default=0.0)
     unit_selling_price = db.Column(db.Float, default=0.0)
     discount = db.Column(db.Float, default=0.0)
@@ -114,11 +129,21 @@ class SaleItem(db.Model):
     profit = db.Column(db.Float, default=0.0)
 
     def to_dict(self):
+        effective = None
+        if self.is_weight is False:
+            effective = self.quantity
+        elif self.is_weight is True and self.weight_unit_grams:
+            effective = self.quantity / self.weight_unit_grams
         return {
             'id': self.id,
             'product_id': self.product_id,
             'product_name': self.product_name,
             'quantity': self.quantity,
+            'is_weight': self.is_weight,
+            'weight_unit_grams': self.weight_unit_grams,
+            'gross_amount': round(self.unit_selling_price * effective, 2) if effective is not None else None,
+            'discount_amount': round(self.discount * effective, 2) if effective is not None else None,
+            'total_purchase_cost': round(self.total_price - self.profit, 2),
             'unit_purchase_price': self.unit_purchase_price,
             'unit_selling_price': self.unit_selling_price,
             'discount': self.discount,
@@ -136,6 +161,8 @@ class Expense(db.Model):
     notes = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     created_by = db.Column(db.String(120), default='المدير')
+    source = db.Column(db.String(20), default='manual')
+    source_key = db.Column(db.String(100), unique=True, nullable=True)
 
     def to_dict(self):
         return {
@@ -146,6 +173,7 @@ class Expense(db.Model):
             'notes': self.notes or '',
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else '',
             'created_by': self.created_by
+            , 'source': self.source or 'manual'
         }
 
 class RestockHistory(db.Model):
@@ -194,6 +222,7 @@ class ActiveOrder(db.Model):
     order_type = db.Column(db.String(20), default='table') # 'table' or 'direct'
     cashier_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     total_amount = db.Column(db.Float, default=0.0)
+    cart_state = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     items = db.relationship('ActiveOrderItem', backref='active_order', lazy=True, cascade="all, delete-orphan")
@@ -204,6 +233,7 @@ class ActiveOrder(db.Model):
             'id': self.id,
             'table_id': self.table_id,
             'order_type': self.order_type,
+            'cart_state': json.loads(self.cart_state) if self.cart_state else None,
             'total_amount': round(self.total_amount, 2),
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else '',
             'items': [item.to_dict() for item in self.items]
