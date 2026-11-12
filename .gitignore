@@ -18,3 +18,18 @@ env/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Customer and license material must never be committed
+**/signing-private.pem
+**/deployment.pos
+**/license.lic
+**/issued-licenses/
+**/issuance-log.jsonl
+**/POS Exports/
+release-build/
+dist/
+__pycache__/
+backend/logs/
+**/.key_secret
+**/signing-private-backup.pem
+**/pos-signing-backup.pem

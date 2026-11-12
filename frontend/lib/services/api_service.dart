@@ -13,9 +13,11 @@ class ApiService {
   static final reportsRevision = ValueNotifier<int>(0);
   static String baseUrl = 'http://127.0.0.1:5000';
   static UserModel? currentUser;
+  static List<Map<String, dynamic>> roleCatalog = [];
   static String? authToken;
   static String lastError = 'تعذر تنفيذ العملية. تحقق من الاتصال وحاول مجدداً.';
   static void Function()? onSessionExpired;
+  static void Function()? onLicenseRequired;
   static Future<http.Response> _request(
     String method,
     Uri url, {
@@ -33,9 +35,11 @@ class ApiService {
         if (sentToken != null) 'Authorization': 'Bearer $sentToken',
       });
       if (body != null) request.body = body as String;
-      final response = await http.Response.fromStream(
-        await client.send(request),
-      ).timeout(const Duration(seconds: 20));
+      final response = await client
+          .send(request)
+          .then(http.Response.fromStream)
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode == 423) onLicenseRequired?.call();
       if (response.statusCode >= 400) {
         try {
           lastError =
@@ -613,12 +617,15 @@ class ApiService {
     throw Exception(lastError);
   }
 
-  static Future<void> exportFile(
+  static Future<Map<String, dynamic>> exportFile(
     String path,
     String format, {
     Map<String, String>? query,
     Map<String, dynamic>? body,
   }) async {
+    final scope = exportScope;
+    // Prepare the automatic local destination before requesting the report.
+    await downloads.prepareFolder(scope);
     final response = await _request(
       body == null ? 'GET' : 'POST',
       Uri.parse(
@@ -628,12 +635,38 @@ class ApiService {
       body: body == null ? null : jsonEncode(body),
     );
     if (response.statusCode != 200) throw Exception(lastError);
-    downloads.saveFile(
+    if (scope != exportScope)
+      throw Exception('تغيّر الحساب. أعد التصدير من حسابك الحالي.');
+    final kind = path.contains('/cart/')
+        ? 'cart'
+        : path.contains('/sales/')
+        ? 'order'
+        : 'report';
+    return downloads.saveFile(
+      scope,
       response.bodyBytes,
-      'pos-${DateTime.now().millisecondsSinceEpoch}.$format',
+      'pos-$kind-${DateTime.now().microsecondsSinceEpoch}.$format',
       response.headers['content-type'] ?? 'application/octet-stream',
     );
   }
+
+  static String get exportScope {
+    final user = currentUser;
+    if (user == null) throw Exception('سجل الدخول أولاً.');
+    final server = base64Url
+        .encode(utf8.encode(Uri.parse(baseUrl).origin))
+        .replaceAll('=', '');
+    return 'user-${user.id}-${user.role}-$server';
+  }
+
+  static Future<String> prepareExportFolder({bool change = false}) =>
+      downloads.prepareFolder(exportScope, change: change);
+
+  static Future<List<Map<String, dynamic>>> localExports() =>
+      downloads.listFiles(exportScope);
+
+  static Future<void> openLocalExport(Map<String, dynamic> file) =>
+      downloads.openFile(exportScope, '${file['filename']}');
 
   // --- DATABASE SWITCHER ---
   static Future<bool> switchDatabase(String dbType) async {

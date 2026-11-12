@@ -1,15 +1,16 @@
 import 'dart:convert';
-import 'dart:html' as html;
+import 'local_store_native.dart' if (dart.library.html) 'local_store_web.dart';
 import '../models/user_model.dart';
 
 class SessionService {
   static const String _sessionKey = 'app_cashier_user_session';
 
-  static String? get token => html.window.localStorage['app_cashier_token'];
-  static String get serverUrl =>
-      html.window.localStorage['app_cashier_server'] ?? 'http://127.0.0.1:5000';
+  static String? get token => store['app_cashier_token'];
+  static String get serverUrl => const bool.fromEnvironment('POS_PACKAGED')
+      ? localServer
+      : store['app_cashier_server'] ?? 'http://127.0.0.1:5000';
   static void saveServerUrl(String url) =>
-      html.window.localStorage['app_cashier_server'] = url;
+      store['app_cashier_server'] = url;
 
   static Future<void> saveSession(UserModel user, {String? token}) async {
     try {
@@ -21,8 +22,8 @@ class SessionService {
         'is_active': user.isActive,
         'created_at': user.createdAt,
       });
-      html.window.localStorage[_sessionKey] = jsonStr;
-      if (token != null) html.window.localStorage['app_cashier_token'] = token;
+      store[_sessionKey] = jsonStr;
+      if (token != null) store['app_cashier_token'] = token;
     } catch (e) {
       print('Save session error: $e');
     }
@@ -30,7 +31,7 @@ class SessionService {
 
   static Future<UserModel?> loadSession() async {
     try {
-      final jsonStr = html.window.localStorage[_sessionKey];
+      final jsonStr = store[_sessionKey];
       if (jsonStr != null && jsonStr.isNotEmpty) {
         final data = json.decode(jsonStr);
         return UserModel.fromJson(data);
@@ -43,8 +44,8 @@ class SessionService {
 
   static Future<void> clearSession() async {
     try {
-      html.window.localStorage.remove(_sessionKey);
-      html.window.localStorage.remove('app_cashier_token');
+      store.remove(_sessionKey);
+      store.remove('app_cashier_token');
     } catch (e) {
       print('Clear session error: $e');
     }

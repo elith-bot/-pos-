@@ -4,6 +4,12 @@ import json
 
 db = SQLAlchemy()
 
+class CustomRole(db.Model):
+    __tablename__ = 'custom_roles'
+    id = db.Column(db.String(20), primary_key=True)
+    name = db.Column(db.String(80), unique=True, nullable=False)
+    permissions_json = db.Column(db.Text, nullable=False, default='[]')
+
 class User(db.Model):
     __tablename__ = 'users'
 
@@ -16,11 +22,16 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
+        from role_access import permissions_for, role_rank, role_label, role_descriptors
         return {
             'id': self.id,
             'username': self.username,
             'full_name': self.full_name,
             'role': self.role,
+            'role_label': role_label(self.role),
+            'role_rank': role_rank(self.role),
+            'permissions': sorted(permissions_for(self.role)),
+            'available_roles': role_descriptors(),
             'is_active': self.is_active,
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else ''
         }

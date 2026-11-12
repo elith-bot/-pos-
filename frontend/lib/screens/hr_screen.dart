@@ -5,6 +5,8 @@ import '../services/permissions_service.dart';
 import '../models/expense_model.dart';
 import '../widgets/business_form.dart';
 import '../widgets/section_tabs.dart';
+import '../models/user_model.dart';
+import 'accounts_screen.dart';
 
 const payTypes = {'monthly': 'شهري', 'daily': 'يومي', 'hourly': 'بالساعة'};
 const attendanceTypes = {
@@ -33,6 +35,7 @@ class _HrScreenState extends State<HrScreen> {
   int section = 0, version = 0;
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month);
   List<Map<String, dynamic>> staff = [], attendance = [], payroll = [];
+  List<Map<String, dynamic>> unlinkedUsers = [];
   String search = '';
   bool loading = true;
   String? error;
@@ -53,18 +56,21 @@ class _HrScreenState extends State<HrScreen> {
     try {
       final results = await Future.wait([
         ApiService.businessRequest('/api/hr/staff'),
-        ApiService.businessRequest(
+        appPermissions.has('attendance.view') ? ApiService.businessRequest(
           '/api/hr/attendance',
           query: {'month': monthLabel(month)},
-        ),
-        ApiService.businessRequest(
+        ) : Future.value(<String,dynamic>{'attendance': []}),
+        appPermissions.has('payroll.view') ? ApiService.businessRequest(
           '/api/hr/payroll',
           query: {'month': monthLabel(month)},
-        ),
+        ) : Future.value(<String,dynamic>{'payroll': []}),
       ]);
       if (!mounted || requestVersion != version) return;
       setState(() {
         staff = List<Map<String, dynamic>>.from(results[0]['staff']);
+        unlinkedUsers = List<Map<String, dynamic>>.from(
+          results[0]['unlinked_users'] ?? [],
+        );
         attendance = List<Map<String, dynamic>>.from(results[1]['attendance']);
         payroll = List<Map<String, dynamic>>.from(results[2]['payroll']);
         loading = false;
@@ -87,14 +93,18 @@ class _HrScreenState extends State<HrScreen> {
 
   Future<void> editStaff([Map<String, dynamic>? s]) async {
     try {
-      final users = await ApiService.getUsers();
-      if (!mounted) return;
+      final existing = s?['account'] == null
+          ? null
+          : UserModel.fromJson(Map<String, dynamic>.from(s!['account']));
+      final canEditAccount =
+          (existing == null && appPermissions.has('employees.create')) || (existing != null && appPermissions.canManage(existing) && appPermissions.has('employees.roles'));
+      final isNew = s?['id'] == null;
       final c = Map<String, dynamic>.from(s?['contract'] ?? {});
       final saved = await businessForm(
         context,
-        title: s == null ? 'إضافة موظف وعقد العمل' : 'تعديل الموظف والعقد',
+        title: s == null ? 'إضافة موظف وحساب وعقد' : 'تعديل الموظف والعقد',
         description:
-            'ملف الموارد البشرية مستقل عن حساب الدخول. اربطه بحساب ليتمكن صاحبه من رؤية عقده. قواعد الحضور تحتسب من السجلات المدخلة فقط؛ الأيام غير المسجلة لا تعتبر غياباً. الراتب الشهري لا يُجزأ تلقائياً عند التعيين منتصف الشهر. الدوام هنا ضمن اليوم نفسه.',
+            'للموظف الجديد يُنشأ حساب تلقائياً برقم الهاتف والدور المختار، وافتراضياً كاشير. الحسابات القديمة تحتفظ باسم الدخول وكلمة المرور حتى تعدّل بيانات دخولها. الأيام غير المسجلة لا تعتبر غياباً. الراتب الشهري لا يُجزأ تلقائياً. الدوام ضمن اليوم نفسه.',
         initial: {
           'start_date': dayLabel(DateTime.now()),
           'rate': 0,
@@ -109,21 +119,35 @@ class _HrScreenState extends State<HrScreen> {
           'shift_end': '17:00',
           ...?s,
           ...c,
-          'user_id': '${s?['user_id'] ?? 0}',
+          'role': existing?.role ?? 'cashier',
         },
         fields: [
           const BusinessField('name', 'الاسم الكامل'),
           const BusinessField('job_title', 'المسمى الوظيفي', required: false),
-          const BusinessField('phone', 'الهاتف', required: false),
-          const BusinessField('start_date', 'تاريخ التعيين', kind: 'date'),
           BusinessField(
-            'user_id',
-            'حساب الدخول المرتبط',
-            options: {
-              '0': 'بدون حساب دخول',
-              for (final u in users) '${u.id}': '${u.fullName} (${u.username})',
-            },
+            'phone',
+            'رقم الهاتف (اسم الدخول للحساب الجديد)',
+            required: existing == null,
           ),
+          const BusinessField('start_date', 'تاريخ التعيين', kind: 'date'),
+          if (canEditAccount) ...[
+            BusinessField(
+              'role',
+              'الدور والصلاحيات',
+              options: {
+                for (final r in appPermissions.assignableRoles)
+                  r: PermissionsService.roles[r]!,
+              },
+            ),
+            BusinessField(
+              'password',
+              existing == null
+                  ? 'كلمة مرور الحساب'
+                  : 'كلمة مرور جديدة (اختياري)',
+              kind: 'password',
+              required: existing == null,
+            ),
+          ],
           const BusinessField(
             'pay_type',
             'نوع الراتب / الأجر',
@@ -185,6 +209,12 @@ class _HrScreenState extends State<HrScreen> {
           ),
         ],
         save: (d) async {
+          final changeAccount =
+              canEditAccount &&
+              (existing == null ||
+                  '${d['phone']}'.trim() != '${s?['phone'] ?? ''}'.trim() ||
+                  d['role'] != existing.role ||
+                  '${d['password'] ?? ''}'.isNotEmpty);
           final contractKeys = [
             'pay_type',
             'rate',
@@ -206,16 +236,25 @@ class _HrScreenState extends State<HrScreen> {
               'job_title',
               'phone',
               'start_date',
-              'user_id',
               'notes',
             ])
               k: d[k],
             'base_salary': d['rate'],
             'contract': {for (final k in contractKeys) k: d[k]},
+            if (isNew && s?['user_id'] != null) 'user_id': s!['user_id'],
+            if (changeAccount)
+              'account': {'role': d['role'], 'password': d['password'] ?? ''},
           };
+          if (changeAccount &&
+              existing != null &&
+              '${d['phone']}'.trim().isEmpty) {
+            throw Exception(
+              'أدخل رقم الهاتف لتحديث بيانات الدخول، أو استخدم زر الحساب والصلاحيات.',
+            );
+          }
           await ApiService.businessRequest(
-            s == null ? '/api/hr/staff' : '/api/hr/staff/${s['id']}',
-            method: s == null ? 'POST' : 'PUT',
+            isNew ? '/api/hr/staff' : '/api/hr/staff/${s!['id']}',
+            method: isNew ? 'POST' : 'PUT',
             body: body,
           );
         },
@@ -224,6 +263,32 @@ class _HrScreenState extends State<HrScreen> {
     } catch (e) {
       notify(e);
     }
+  }
+
+  Future<void> accountDetails(int id) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        child: SizedBox(
+          width: 760,
+          height: MediaQuery.sizeOf(ctx).height * .85,
+          child: Column(
+            children: [
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: IconButton(
+                  tooltip: 'إغلاق',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ),
+              Expanded(child: AccountsScreen(userId: id)),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mounted) await load();
   }
 
   Future<void> recordAttendance([Map<String, dynamic>? row]) async {
@@ -386,11 +451,11 @@ class _HrScreenState extends State<HrScreen> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   const Text(
-                    'الموارد البشرية',
+                    'الموظفون والموارد البشرية',
                     style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                   ),
                   FilledButton.icon(
-                    onPressed: () => editStaff(),
+                    onPressed: !appPermissions.has('hr.edit') || !appPermissions.has('employees.create') ? null : () => editStaff(),
                     icon: const Icon(Icons.person_add_outlined),
                     label: const Text('إضافة موظف وعقد'),
                   ),
@@ -448,13 +513,9 @@ class _HrScreenState extends State<HrScreen> {
                 ],
               ),
               SectionTabs(
-                labels: const [
-                  'الموظفون والعقود',
-                  'الحضور والإجازات',
-                  'الرواتب',
-                ],
-                selected: section,
-                onSelected: (i) => setState(() => section = i),
+                labels: [ 'الموظفون والعقود', if(appPermissions.has('attendance.view')) 'الحضور والإجازات', if(appPermissions.has('payroll.view')) 'الرواتب'],
+                selected: [0, if(appPermissions.has('attendance.view')) 1, if(appPermissions.has('payroll.view')) 2].indexOf(section),
+                onSelected: (i) => setState(() => section = [0, if(appPermissions.has('attendance.view')) 1, if(appPermissions.has('payroll.view')) 2][i]),
               ),
               const SizedBox(height: 12),
               if (loading) const LinearProgressIndicator(),
@@ -470,10 +531,48 @@ class _HrScreenState extends State<HrScreen> {
                     onChanged: (v) => setState(() => search = v),
                   ),
                   const SizedBox(height: 12),
-                  if (people.isEmpty)
+                  if (people.isEmpty && unlinkedUsers.isEmpty)
+                    panel(const Text('أضف موظفاً؛ يُنشأ حسابه وعقده معاً.')),
+                  for (final u in unlinkedUsers.where(
+                    (u) =>
+                        '${u['full_name']} ${u['username']}'.contains(search),
+                  ))
                     panel(
-                      const Text(
-                        'أضف موظفاً وحدد عقده، ويمكن ربطه بحساب الدخول الحالي.',
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${u['full_name']} • ${PermissionsService.roles[u['role']] ?? u['role']}',
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            'اسم الدخول: ${u['username']} • ${u['is_active'] == true ? 'نشط' : 'معطل'}',
+                          ),
+                          const Text(
+                            'حساب موجود مسبقاً؛ لم تُحدد له بيانات عقد ورواتب بعد.',
+                          ),
+                          Wrap(
+                            spacing: 8,
+                            children: [
+                              TextButton(
+                                onPressed: () => editStaff({
+                                  'user_id': u['id'],
+                                  'name': u['full_name'],
+                                  'phone': '',
+                                  'account': u,
+                                }),
+                                child: const Text('إكمال ملف الموظف والعقد'),
+                              ),
+                              TextButton(
+                                onPressed: () => accountDetails(u['id']),
+                                child: const Text('الحساب والصلاحيات'),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                   for (final s in people)
@@ -494,11 +593,20 @@ class _HrScreenState extends State<HrScreen> {
                           Text(
                             'الأجر ${payTypes[s['contract']['pay_type']] ?? ''}: ${amount(s['contract']['rate'])}',
                           ),
+                          if (s['account'] != null)
+                            Text(
+                              'اسم الدخول: ${s['account']['username']} • ${PermissionsService.roles[s['account']['role']] ?? ''} • ${s['account']['is_active'] == true ? 'الحساب نشط' : 'الحساب معطل'}',
+                            ),
                           Wrap(
                             spacing: 8,
                             children: [
+                              if (s['user_id'] != null)
+                                TextButton(
+                                  onPressed: () => accountDetails(s['user_id']),
+                                  child: const Text('الحساب والصلاحيات'),
+                                ),
                               TextButton.icon(
-                                onPressed: () => editStaff(s),
+                                onPressed: !appPermissions.has('hr.edit') ? null : () => editStaff(s),
                                 icon: const Icon(Icons.edit_outlined),
                                 label: const Text('تعديل البيانات والعقد'),
                               ),
@@ -539,7 +647,7 @@ class _HrScreenState extends State<HrScreen> {
                   Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: FilledButton.icon(
-                      onPressed: () => recordAttendance(),
+                      onPressed: !appPermissions.has('attendance.edit') ? null : () => recordAttendance(),
                       icon: const Icon(Icons.event_available),
                       label: const Text('تسجيل حضور / إجازة'),
                     ),
@@ -564,7 +672,7 @@ class _HrScreenState extends State<HrScreen> {
                           ),
                           Text('${a['notes']}'),
                           TextButton(
-                            onPressed: () => recordAttendance(a),
+                            onPressed: !appPermissions.has('attendance.edit') ? null : () => recordAttendance(a),
                             child: const Text('تعديل الحضور'),
                           ),
                         ],
@@ -632,7 +740,7 @@ class _HrScreenState extends State<HrScreen> {
                                   spacing: 12,
                                   children: [
                                     OutlinedButton(
-                                      onPressed: () => preparePayroll(s, p),
+                                      onPressed: !appPermissions.has('payroll.prepare') ? null : () => preparePayroll(s, p),
                                       child: Text(
                                         p == null
                                             ? 'إعداد الراتب'
@@ -641,7 +749,7 @@ class _HrScreenState extends State<HrScreen> {
                                     ),
                                     if (p != null)
                                       FilledButton(
-                                        onPressed: busyIds.contains(p['id'])
+                                        onPressed: !appPermissions.has('payroll.pay') || busyIds.contains(p['id'])
                                             ? null
                                             : () => pay(p),
                                         child: const Text('صرف الراتب'),

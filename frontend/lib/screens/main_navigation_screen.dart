@@ -11,6 +11,10 @@ import 'employees_screen.dart';
 import 'settings_screen.dart';
 import 'auth_screen.dart';
 import 'hr_screen.dart';
+import 'exports_screen.dart';
+import 'activation_screen.dart';
+import 'support_screen.dart';
+import '../services/system_settings_service.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -28,7 +32,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void initState() {
     super.initState();
     _pages = [
-      ('المبيعات والطاولات', Icons.point_of_sale, PosScreen(key: _posKey)),
+      if (appPermissions.has('products.view') ||
+          appPermissions.has('tables.view'))
+        ('المبيعات والطاولات', Icons.point_of_sale, PosScreen(key: _posKey)),
       if (appPermissions.canManageExpenses)
         (
           'المصاريف',
@@ -43,6 +49,41 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     ];
     ThemeService.themeModeNotifier.addListener(_themeChanged);
     ApiService.onSessionExpired = _expired;
+    ApiService.onLicenseRequired = _licenseRequired;
+    SystemSettingsService.revision.addListener(_settingsChanged);
+    SystemSettingsService.refresh().catchError((_) {});
+  }
+
+  String _tabKey(Widget page) => page is PosScreen
+      ? 'sales'
+      : page is ExpensesScreen
+      ? 'expenses'
+      : page is AnalyticsScreen
+      ? 'analytics'
+      : page is EmployeesScreen
+      ? 'employees'
+      : 'settings';
+  List<int> get _visible => [
+    for (var i = 0; i < _pages.length; i++)
+      if (SystemSettingsService.visible(_tabKey(_pages[i].$3))) i,
+  ];
+  void _settingsChanged() {
+    if (!mounted) return;
+    setState(() {
+      if (!_visible.contains(_selected)) {
+        _selected = _pages.length - 1;
+        _visited.add(_selected);
+      }
+    });
+  }
+
+  void _licenseRequired() {
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const ActivationScreen()),
+      (_) => false,
+    );
   }
 
   void _themeChanged() {
@@ -68,6 +109,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void dispose() {
     ThemeService.themeModeNotifier.removeListener(_themeChanged);
     ApiService.onSessionExpired = null;
+    ApiService.onLicenseRequired = null;
+    SystemSettingsService.revision.removeListener(_settingsChanged);
     super.dispose();
   }
 
@@ -123,13 +166,16 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     child: LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 700;
+        final visible = _visible;
         return Scaffold(
           appBar: AppBar(
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  compact ? _pages[_selected].$1 : 'نظام الكاشير والمبيعات',
+                  compact
+                      ? _pages[_selected].$1
+                      : SystemSettingsService.businessName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -148,6 +194,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               ],
             ),
             actions: [
+              if (appPermissions.canManageSettings)
+              IconButton(
+                tooltip: 'الدعم الفني والصيانة',
+                icon: const Icon(Icons.headset_mic_outlined),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SupportScreen()),
+                ),
+              ),
+              IconButton(
+                tooltip: 'الملفات المصدّرة',
+                icon: const Icon(Icons.folder_open_outlined),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ExportsScreen()),
+                ),
+              ),
               IconButton(
                 tooltip: 'عقدي وشروط العمل',
                 icon: const Icon(Icons.description_outlined),
@@ -179,7 +242,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
-                          for (var i = 0; i < _pages.length; i++)
+                          for (final i in visible)
                             Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 4,
@@ -203,19 +266,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     ),
                   ),
           ),
-          bottomNavigationBar: compact
+          bottomNavigationBar: compact && visible.length > 1
               ? NavigationBar(
-                  selectedIndex: _selected,
-                  onDestinationSelected: _select,
+                  selectedIndex: visible.indexOf(_selected),
+                  onDestinationSelected: (index) => _select(visible[index]),
                   height: 68,
                   backgroundColor: AppColors.surface,
                   indicatorColor: AppColors.primaryLight.withValues(alpha: .12),
                   labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
                   destinations: [
-                    for (var i = 0; i < _pages.length; i++)
+                    for (final i in visible)
                       NavigationDestination(
                         icon: Icon(_pages[i].$2),
-                        label: i == 0 ? 'المبيعات' : _pages[i].$1,
+                        label: _pages[i].$3 is PosScreen
+                            ? 'المبيعات'
+                            : _pages[i].$1,
                       ),
                   ],
                 )

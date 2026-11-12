@@ -144,6 +144,8 @@ class _BusinessFormState extends State<_BusinessForm> {
                                         controllers[f.name]!.text = value!,
                             )
                           : TextFormField(
+                              obscureText: f.kind == 'password',
+                              autocorrect: f.kind != 'password',
                               controller: controllers[f.name],
                               enabled: !busy,
                               keyboardType: f.kind == 'number'
@@ -186,6 +188,10 @@ class _BusinessFormState extends State<_BusinessForm> {
                               validator: (value) {
                                 if (f.required && (value ?? '').trim().isEmpty)
                                   return 'الحقل مطلوب';
+                                if (f.kind == 'password' &&
+                                    (value ?? '').isNotEmpty &&
+                                    value!.length < 8)
+                                  return 'كلمة المرور 8 أحرف على الأقل';
                                 if (f.kind == 'number') {
                                   final n = number(value ?? '');
                                   if (n == null || !n.isFinite || n < 0)

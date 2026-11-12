@@ -1,3 +1,4 @@
+import '../services/system_settings_service.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'dart:async';
@@ -151,6 +152,7 @@ class PosScreenState extends State<PosScreen> {
 
   @override
   void dispose() {
+    SystemSettingsService.revision.removeListener(_settingsChanged);
     _productSearch.dispose();
     _searchDebounce?.cancel();
     _saveDebounce?.cancel();
@@ -241,6 +243,14 @@ class PosScreenState extends State<PosScreen> {
     _loadTables();
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
     ThemeService.themeModeNotifier.addListener(_onThemeChanged);
+    SystemSettingsService.revision.addListener(_settingsChanged);
+  }
+
+  void _settingsChanged() {
+    if (!mounted) return;
+    setState(() {
+      if (!SystemSettingsService.visible('tables') && _selectedTabIndex == 1) _selectedTabIndex = 0;
+    });
   }
 
   Future<void> _loadTables() async {
@@ -2026,19 +2036,19 @@ class PosScreenState extends State<PosScreen> {
                         }
                       },
                       itemBuilder: (_) => [
-                        const PopupMenuItem(
+                        if(appPermissions.has('products.edit')) const PopupMenuItem(
                           value: 'edit',
                           child: Text('تعديل المنتج'),
                         ),
-                        const PopupMenuItem(
+                        if(appPermissions.has('products.restock')) const PopupMenuItem(
                           value: 'restock',
                           child: Text('توريد المخزون'),
                         ),
-                        const PopupMenuItem(
+                        if(appPermissions.has('stock.history')) const PopupMenuItem(
                           value: 'history',
                           child: Text('سجل التوريد'),
                         ),
-                        const PopupMenuItem(
+                        if(appPermissions.has('products.delete')) const PopupMenuItem(
                           value: 'delete',
                           child: Text('حذف المنتج'),
                         ),
@@ -2417,7 +2427,7 @@ class PosScreenState extends State<PosScreen> {
               width: double.infinity,
               child: FilledButton.icon(
                 key: const ValueKey('checkout'),
-                onPressed: _cart.isEmpty ? null : _completeCheckout,
+                onPressed: _cart.isEmpty || !appPermissions.has('sales.create') ? null : _completeCheckout,
                 icon: const Icon(Icons.check_circle_outline),
                 label: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 10),
@@ -2444,7 +2454,8 @@ class PosScreenState extends State<PosScreen> {
               children: [
                 for (final section in [
                   (0, Icons.grid_view_rounded, 'المنتجات'),
-                  (1, Icons.table_restaurant_outlined, 'الطاولات'),
+                  if (SystemSettingsService.visible('tables') && appPermissions.has('tables.view'))
+                    (1, Icons.table_restaurant_outlined, 'الطاولات'),
                   if (compact)
                     (2, Icons.shopping_bag_outlined, 'السلة (${cart.length})'),
                 ])

@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../services/session_service.dart';
 import '../services/theme_service.dart';
 import 'main_navigation_screen.dart';
+import 'activation_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -58,6 +59,10 @@ class _AuthScreenState extends State<AuthScreen> {
             );
           }
         } else {
+          if (res['code'] == 'license_required') {
+            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ActivationScreen()));
+            return;
+          }
           setState(() {
             _errorMessage = res['message'] ?? 'فشل تسجيل الدخول';
           });

@@ -7,7 +7,9 @@ from sqlalchemy.exc import IntegrityError
 from models import db, Expense, User
 from hr_models import Staff, StaffContract, Attendance, Payroll, FixedExpense
 from transactions import number
-from security import failure, POLICY
+from security import failure, POLICY, RANK, manageable, revoke
+from werkzeug.security import generate_password_hash
+from role_access import role_exists, role_rank, permissions_for, has_permission
 
 
 def money(value):
@@ -93,6 +95,44 @@ def install_hr_finance(app):
         if not db.session.get(User, user_id): raise ValueError('حساب الدخول غير موجود.')
         return user_id
 
+    def save_staff_account(s, d):
+        """Account and contract changes commit together, preserving legacy logins."""
+        account = d.get('account')
+        if account is None: return
+        if not isinstance(account, dict): raise ValueError('بيانات الحساب غير صحيحة.')
+        user = db.session.get(User, s.user_id) if s.user_id else None
+        role = account.get('role', user.role if user else 'cashier')
+        if not role_exists(role) or role_rank(g.current_user.role) <= role_rank(role) or not permissions_for(role) <= permissions_for(g.current_user.role):
+            raise ValueError('لا يمكنك منح هذا الدور.')
+        if user and not manageable(user, role):
+            raise ValueError('لا يمكنك تعديل حسابك أو حساب بنفس صلاحيتك أو أعلى.')
+        phone = text(s.phone, 40, True).translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'))
+        phone = re.sub(r'[\s()-]', '', phone)
+        if not re.fullmatch(r'\+?[0-9]{7,15}', phone):
+            raise ValueError('أدخل رقم هاتف صحيحاً من 7 إلى 15 رقماً.')
+        s.phone = phone
+        duplicate = User.query.filter_by(username=phone).first()
+        if duplicate and (not user or duplicate.id != user.id):
+            raise ValueError('رقم الهاتف مستخدم لحساب موجود. أكمل ملف ذلك الحساب بدلاً من إنشاء حساب مكرر.')
+        password = account.get('password', '')
+        if not isinstance(password, str) or ((not user or password) and len(password) < 8):
+            raise ValueError('كلمة المرور يجب أن تكون 8 أحرف على الأقل.')
+        if not user:
+            if not has_permission('employees.create'): raise ValueError('إنشاء حساب الدخول يحتاج صلاحية إنشاء حساب موظف.')
+            user = User(username=phone, full_name=s.name, role=role, is_active=True,
+                        password_hash=generate_password_hash(password))
+            db.session.add(user)
+            db.session.flush()
+            s.user_id = user.id
+        else:
+            if user.username != phone and not has_permission('employees.roles'): raise ValueError('لا تملك صلاحية تغيير بيانات دخول الموظف.')
+            if user.role != role and not has_permission('employees.roles'): raise ValueError('لا تملك صلاحية تغيير دور الموظف.')
+            if password and not has_permission('employees.password'): raise ValueError('لا تملك صلاحية تغيير كلمة المرور.')
+            changed = user.username != phone or user.role != role or bool(password)
+            user.username, user.full_name, user.role = phone, s.name, role
+            if password: user.password_hash = generate_password_hash(password)
+            if changed: revoke(user.id)
+
     def route(path, methods):
         def decorate(fn):
             # Payroll and personnel files require owner-level access, unlike sales reports.
@@ -114,13 +154,17 @@ def install_hr_finance(app):
     @route('/api/hr/staff', ['GET', 'POST'])
     def hr_staff():
         if request.method == 'GET':
-            return jsonify(staff=[s.to_dict() for s in Staff.query.order_by(Staff.name).all()])
+            people = Staff.query.order_by(Staff.name).all()
+            linked = {s.user_id for s in people if s.user_id}
+            return jsonify(staff=[s.to_dict() for s in people],
+                           unlinked_users=[u.to_dict() for u in User.query.order_by(User.full_name).all() if u.id not in linked])
         d = request.get_json() or {}
         s = Staff(name=text(d.get('name'), 120, True), job_title=text(d.get('job_title'), 120),
                   user_id=linked_user(d.get('user_id')),
                   phone=text(d.get('phone'), 40), start_date=period(d.get('start_date')),
                   base_salary=money(d.get('base_salary', 0)), notes=text(d.get('notes'), 2000))
         db.session.add(s)
+        save_staff_account(s, d)
         db.session.flush()
         terms = contract_terms(d.get('contract', {'rate': s.base_salary}), s.start_date)
         db.session.add(StaffContract(staff_id=s.id, effective_month=terms['effective_month'], terms=json.dumps(terms, ensure_ascii=False), recorded_by=g.current_user.full_name))
@@ -132,7 +176,8 @@ def install_hr_finance(app):
         s = db.session.get(Staff, staff_id)
         if not s: return failure('الموظف غير موجود.', 404)
         d = request.get_json() or {}
-        if 'user_id' in d: s.user_id = linked_user(d['user_id'])
+        if 'user_id' in d and linked_user(d['user_id']) != s.user_id:
+            raise ValueError('لا يمكن نقل ملف موظف مرتبط إلى حساب آخر.')
         s.name = text(d.get('name', s.name), 120, True)
         s.job_title = text(d.get('job_title', s.job_title), 120)
         s.phone = text(d.get('phone', s.phone), 40)
@@ -142,11 +187,13 @@ def install_hr_finance(app):
             if not isinstance(d['active'], bool): raise ValueError('حالة الموظف غير صحيحة.')
             s.active = d['active']
         s.notes = text(d.get('notes', s.notes), 2000)
+        save_staff_account(s, d)
         if 'contract' in d:
             terms = contract_terms(d['contract'], s.start_date)
-            if Payroll.query.filter(Payroll.staff_id == s.id, Payroll.month >= terms['effective_month'], Payroll.status == 'paid').first():
-                raise ValueError('لا تعدّل عقد فترة صُرفت رواتبها؛ اختر شهر سريان أحدث.')
             existing = StaffContract.query.filter_by(staff_id=s.id, effective_month=terms['effective_month']).first()
+            unchanged = existing is not None and json.loads(existing.terms) == terms
+            if not unchanged and Payroll.query.filter(Payroll.staff_id == s.id, Payroll.month >= terms['effective_month'], Payroll.status == 'paid').first():
+                raise ValueError('لا تعدّل عقد فترة صُرفت رواتبها؛ اختر شهر سريان أحدث.')
             if not existing:
                 existing = StaffContract(staff_id=s.id, effective_month=terms['effective_month'])
                 db.session.add(existing)

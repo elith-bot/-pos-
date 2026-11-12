@@ -63,7 +63,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       _error = null;
     });
     try {
-      final data = await ApiService.getExpenses();
+      final data = appPermissions.has('expenses.view') ? await ApiService.getExpenses() : <String,dynamic>{'expenses': []};
       final expenses = (data['expenses'] as List)
           .map((e) => ExpenseModel.fromJson(Map<String, dynamic>.from(e)))
           .toList();
@@ -638,7 +638,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           IconButton(
             tooltip: 'تعديل المصروف',
             icon: const Icon(Icons.edit_outlined, size: 20),
-            onPressed: () => _editExpense(expense),
+            onPressed: appPermissions.has('expenses.edit') ? () => _editExpense(expense) : null,
           ),
         _deleting.contains(expense.id)
             ? const SizedBox(
@@ -659,7 +659,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                   size: 20,
                   color: AppColors.danger,
                 ),
-                onPressed: expense.editable
+                onPressed: appPermissions.has('expenses.delete') && expense.editable
                     ? () => _deleteExpense(expense)
                     : null,
               ),
@@ -859,7 +859,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                           ],
                         ),
                         FilledButton.icon(
-                          onPressed: _addExpense,
+                          onPressed: appPermissions.has('expenses.create') ? _addExpense : null,
                           icon: const Icon(Icons.add),
                           label: const Text('تسجيل مصروف'),
                           style: FilledButton.styleFrom(
@@ -874,7 +874,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                           tooltip: 'تحديث المصاريف',
                           icon: const Icon(Icons.refresh),
                         ),
-                        if (appPermissions.canManageHR)
+                        if (appPermissions.has('fixed.view'))
                           OutlinedButton.icon(
                             onPressed: () => Navigator.push(
                               context,
@@ -1011,7 +1011,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                                 const SizedBox(height: 12),
                                 if (_expenses.isEmpty)
                                   TextButton(
-                                    onPressed: _addExpense,
+                                    onPressed: appPermissions.has('expenses.create') ? _addExpense : null,
                                     child: const Text('تسجيل مصروف جديد'),
                                   ),
                               ],

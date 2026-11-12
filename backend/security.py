@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from flask import request, jsonify, g
 from werkzeug.security import check_password_hash, generate_password_hash
 from models import db, User, AuthSession
+from role_access import role_rank, permissions_for, has_permission, allowed_endpoint
 
 RANK = {'cashier': 0, 'admin': 1, 'owner': 2, 'developer': 3}
 MANAGERS = {'admin', 'owner', 'developer'}
@@ -30,9 +31,10 @@ def failure(message, status=403):
     return jsonify(status='error', message=message), status
 
 def issue_session(user):
+    from system_settings import get_settings
     token = secrets.token_urlsafe(32)
     db.session.add(AuthSession(token_hash=hashlib.sha256(token.encode()).hexdigest(),
-        user_id=user.id, expires_at=datetime.utcnow() + timedelta(hours=12)))
+        user_id=user.id, expires_at=datetime.utcnow() + timedelta(hours=get_settings()['session_hours'])))
     db.session.commit()
     return token
 
@@ -40,9 +42,9 @@ def manageable(user, new_role=None):
     actor = g.current_user
     if actor.id == user.id:
         return False
-    rank = RANK.get(actor.role, -1)
-    return rank > RANK.get(user.role, 99) and (
-        new_role is None or rank > RANK.get(new_role, 99))
+    rank = role_rank(actor.role)
+    return rank > role_rank(user.role) and permissions_for(user.role) <= permissions_for(actor.role) and (
+        new_role is None or (rank > role_rank(new_role) and permissions_for(new_role) <= permissions_for(actor.role)))
 
 def revoke(user_id):
     AuthSession.query.filter_by(user_id=user_id).delete()
@@ -50,7 +52,7 @@ def revoke(user_id):
 def install_security(app):
     @app.before_request
     def authenticate():
-        if request.method == 'OPTIONS' or request.endpoint in {'health_check', 'login'}:
+        if request.method == 'OPTIONS' or request.endpoint in {'health_check', 'login', 'license_status', 'activate_license'}:
             return None
         if not request.path.startswith('/api/') or request.endpoint is None:
             return None
@@ -64,15 +66,18 @@ def install_security(app):
             return failure('الحساب معطل. راجع الإدارة.', 401)
         g.current_user = user
         g.auth_session = session
-        if user.role not in POLICY.get(request.endpoint, set()):
+        if not allowed_endpoint(request.endpoint, request.method):
             return failure('ليس لديك صلاحية لتنفيذ هذا الإجراء.')
         return None
 
     @app.after_request
     def redact_costs(response):
-        if getattr(g, 'current_user', None) and g.current_user.role == 'cashier' and response.is_json:
-            hidden = {'purchase_price', 'unit_purchase_price', 'unit_profit',
-                      'total_purchase_cost', 'profit', 'net_profit'}
+        if getattr(g, 'current_user', None) and response.is_json:
+            hidden = set()
+            if not has_permission('financial.costs'):
+                hidden.update({'purchase_price','unit_purchase_price','total_purchase_cost','total_cost','total_supply','total_outflows','sales_less_outflows'})
+            if not has_permission('financial.profit'):
+                hidden.update({'unit_profit','profit','net_profit','gross_profit','final_net_profit','profit_margin_pct','loss'})
             def clean(value):
                 if isinstance(value, dict):
                     return {k: clean(v) for k, v in value.items() if k not in hidden}

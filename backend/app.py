@@ -17,6 +17,11 @@ from transactions import create_sale_transaction, save_table_transaction
 from transactions import number
 from hr_finance import install_hr_finance
 from report_exports import install_exports
+from roles_api import install_roles
+from role_access import role_exists, permissions_for, role_rank
+from licensing import install_licensing
+from system_settings import install_settings
+from remote_support import support_bp
 
 def create_app(test_config=None):
     app = Flask(__name__)
@@ -26,8 +31,12 @@ def create_app(test_config=None):
 
     CORS(app)
     db.init_app(app)
+    install_licensing(app)
     install_security(app)
+    install_settings(app)
+    install_roles(app)
     install_hr_finance(app)
+    app.register_blueprint(support_bp)
 
     with app.app_context():
         try:
@@ -85,7 +94,11 @@ def create_app(test_config=None):
                 db.session.rollback()
 
             # Seed initial Developer account if users table is empty
-            if User.query.count() == 0 : 
+            manager = app.extensions.get('pos_license')
+            if manager:
+                from customer_bootstrap import bootstrap_customer
+                bootstrap_customer(manager.deployment)
+            if User.query.count() == 0 and not app.config.get('LICENSE_REQUIRED') and not getattr(__import__('sys'), 'frozen', False):
                 dev = User(
                     username='admin',
                     password_hash=generate_password_hash('admin123'),
@@ -159,13 +172,15 @@ def create_app(test_config=None):
             pass
         return jsonify({
             'status': 'error',
-            'message': 'تعذر الاتصال بقاعدة بيانات MySQL. يرجى التأكد من تشغيل خادم MySQL أو التبديل لـ SQLite في الإعدادات.'
+            'message': 'تعذر فتح بيانات النظام. أعد تشغيل البرنامج، وإذا استمرت المشكلة تواصل مع الدعم.'
         }), 503
 
 
     # ================= AUTHENTICATION APIs =================
     @app.route('/api/auth/register', methods=['POST'])
     def register():
+        if role_rank(g.current_user.role) <= 0 or not permissions_for("cashier") <= permissions_for(g.current_user.role):
+            return jsonify(message="لا يمكنك إنشاء حساب بصلاحيات تتجاوز صلاحياتك."), 403
         data = request.get_json() or {}
         username = data.get('username', '').strip()
         password = data.get('password', '')
@@ -267,7 +282,7 @@ def create_app(test_config=None):
     def update_user_role(user_id):
         data = request.get_json() or {}
         new_role = data.get('role')
-        if new_role not in ['developer', 'owner', 'admin', 'cashier']:
+        if not role_exists(new_role):
             return jsonify({'status': 'error', 'message': 'دور غير صالح'}), 400
 
         user = User.query.get(user_id)

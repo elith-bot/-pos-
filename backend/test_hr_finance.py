@@ -44,6 +44,48 @@ class HRFinanceTests(unittest.TestCase):
         self.assertEqual(bad.status_code, 400)
         self.assertEqual(Staff.query.count(), 1)
 
+    def test_employee_account_is_atomic_and_phone_is_login(self):
+        payload = {'name': 'New employee', 'phone': '٠٧٧٠ ١٢٣ ٤٥٦٧', 'start_date': '2026-11-01',
+                   'account': {'password': 'employee123'}, 'contract': {'rate': 1000, 'effective_month': '2026-11'}}
+        before = User.query.count()
+        bad = {**payload, 'contract': {'rate': -1}}
+        self.assertEqual(self.client.post('/api/hr/staff', headers=self.tokens['owner'], json=bad).status_code, 400)
+        self.assertEqual(User.query.count(), before)
+        self.assertEqual(Staff.query.count(), 0)
+        for role in ['owner', 'developer', 'unknown']:
+            bad = {**payload, 'account': {'role': role, 'password': 'employee123'}}
+            self.assertEqual(self.client.post('/api/hr/staff', headers=self.tokens['owner'], json=bad).status_code, 400)
+        self.assertEqual(self.client.post('/api/hr/staff', headers=self.tokens['manager'], json=payload).status_code, 403)
+        created = self.client.post('/api/hr/staff', headers=self.tokens['owner'], json=payload)
+        self.assertEqual(created.status_code, 201, created.json)
+        staff = created.json['staff']
+        self.assertEqual(staff['account']['username'], '07701234567')
+        self.assertEqual(staff['account']['role'], 'cashier')
+        login = self.client.post('/api/auth/login', json={'username': '07701234567', 'password': 'employee123'})
+        self.assertEqual(login.status_code, 200)
+        mine = self.client.get('/api/hr/my-contract', headers={'Authorization': 'Bearer '+login.json['token']})
+        self.assertEqual(mine.json['contracts'][0]['rate'], 1000)
+        self.assertEqual(self.client.post('/api/hr/staff', headers=self.tokens['owner'], json=payload).status_code, 400)
+        self.assertEqual(Staff.query.count(), 1)
+
+    def test_legacy_accounts_remain_visible_and_keep_credentials(self):
+        cash = User.query.filter_by(username='cash').one()
+        roster = self.client.get('/api/hr/staff', headers=self.tokens['owner']).json
+        self.assertIn(cash.id, [u['id'] for u in roster['unlinked_users']])
+        count = User.query.count()
+        sid = self.staff()
+        roster = self.client.get('/api/hr/staff', headers=self.tokens['owner']).json
+        self.assertNotIn(cash.id, [u['id'] for u in roster['unlinked_users']])
+        self.assertEqual(roster['staff'][0]['account']['username'], 'cash')
+        self.assertEqual(User.query.count(), count)
+        self.assertEqual(self.client.post('/api/auth/login', json={'username': 'cash', 'password': 'testpass123'}).status_code, 200)
+        bad = self.client.put(f'/api/hr/staff/{sid}', headers=self.tokens['owner'], json={'phone': '07709876543', 'account': {'role': 'owner'}})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(db.session.get(User, cash.id).username, 'cash')
+        # No relinking historical HR/payroll records onto someone else's login.
+        other = User.query.filter_by(username='manager').one()
+        self.assertEqual(self.client.put(f'/api/hr/staff/{sid}', headers=self.tokens['owner'], json={'user_id': other.id}).status_code, 400)
+
     def test_contract_payroll_and_idempotent_expense(self):
         sid = self.staff(grace_minutes=5, late_per_minute=2, absence_per_day=100,
                          bonus_type='per_present_day', bonus_amount=10)
@@ -62,6 +104,8 @@ class HRFinanceTests(unittest.TestCase):
             self.assertEqual(paid.status_code, 200, paid.json)
         expense = Expense.query.filter_by(source='payroll').one()
         self.assertEqual(expense.amount, 910)
+        current = db.session.get(Staff, sid).to_dict()['contract']
+        self.assertEqual(self.client.put(f'/api/hr/staff/{sid}', headers=self.tokens['owner'], json={'name': 'Updated profile', 'contract': current}).status_code, 200)
         self.assertEqual(self.prepare(sid).status_code, 409)
         self.assertEqual(self.attendance(sid).status_code, 400)
         self.assertEqual(self.client.put(f'/api/hr/staff/{sid}', headers=self.tokens['owner'], json={'contract': {'rate': 2000, 'effective_month': '2026-10'}}).status_code, 400)

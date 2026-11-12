@@ -1,0 +1,94 @@
+"""Allowlisted customer packaging; never copy the development DB, .env or admin keys."""
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'backend'))
+sys.path.insert(0, str(ROOT / 'release-build' / 'tooling'))
+from license_protocol import verify
+from distribution_names import application_name
+
+
+def build(edition, compiler=None):
+    edition = Path(edition).resolve()
+    public_key = (edition / 'license-public.pem').read_bytes()
+    manifest = verify((edition / 'deployment.pos').read_text(encoding='utf-8'), public_key, 'deployment')
+    edition_id = manifest['edition_id']
+    display_name = application_name(manifest)
+    if not re.fullmatch('[a-f0-9]{32}', edition_id): raise ValueError('Invalid edition identifier')
+    if not (ROOT / 'frontend' / 'build' / 'windows' / 'x64' / 'runner' / 'Release' / 'starter_app.exe').is_file():
+        raise RuntimeError('ابنِ واجهة Flutter Windows أولاً: flutter build windows --release --dart-define=POS_PACKAGED=true')
+    compiler = compiler or shutil.which('ISCC.exe')
+    if not compiler:
+        for root in [os.environ.get('ProgramFiles(x86)', ''), os.environ.get('ProgramFiles', ''), str(Path(os.environ.get('LOCALAPPDATA', '')) / 'Programs')]:
+            candidate = Path(root) / 'Inno Setup 6' / 'ISCC.exe'
+            if candidate.is_file(): compiler = str(candidate); break
+    if not compiler: raise RuntimeError('يتطلب إنشاء ملف التنصيب تثبيت Inno Setup 6 على جهاز الإدارة.')
+    work = ROOT / 'release-build' / (edition_id + '-' + uuid.uuid4().hex[:8])
+    work.mkdir(parents=True)
+    # Public trust anchor is embedded in compiled Python bytecode, not loaded from an editable PEM.
+    (work / 'trusted_license.py').write_text(f'PUBLIC_KEY = {public_key!r}\nEDITION_ID = {edition_id!r}\nAPP_NAME = {display_name!r}\n', encoding='utf-8')
+    shutil.copyfile(ROOT / 'packaging' / 'customer_entry.py', work / 'customer_entry.py')
+    env = dict(os.environ)
+    env['PYTHONPATH'] = os.pathsep.join([str(ROOT / 'release-build' / 'tooling'), str(ROOT / 'backend'), str(work)])
+    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed', '--uac-admin',
+        '--name', 'POSCashier', '--distpath', str(work / 'dist'), '--workpath', str(work / 'build'), '--specpath', str(work),
+        '--paths', str(ROOT / 'backend'), '--paths', str(work),
+        '--hidden-import', 'sqlalchemy.dialects.sqlite', '--hidden-import', 'sqlalchemy.dialects.mysql.pymysql',
+        '--add-data', str(edition / 'deployment.pos') + ';.',
+        '--add-data', str(ROOT / 'frontend' / 'build' / 'windows' / 'x64' / 'runner' / 'Release') + ';native',
+        '--add-data', str(ROOT / 'frontend' / 'assets' / 'fonts' / 'NotoSansArabic.ttf') + ';fonts',
+        str(work / 'customer_entry.py')], check=True, env=env, cwd=ROOT)
+    # Bundle the native UI's C++ runtime so customers do not need build tools.
+    native_folder = work / 'dist' / 'POSCashier' / '_internal' / 'native'
+    for program_root in [os.environ.get('ProgramFiles(x86)', ''), os.environ.get('ProgramFiles', '')]:
+        vs = Path(program_root) / 'Microsoft Visual Studio' / '2022'
+        for runtime in vs.glob('*/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT/*.dll'):
+            shutil.copy2(runtime, native_folder / runtime.name)
+    packaged = work / 'dist' / 'POSCashier'
+    (packaged / 'POSCashier.exe').rename(packaged / (display_name + '.exe'))
+    (native_folder / 'starter_app.exe').rename(native_folder / (display_name + '.exe'))
+    output = ROOT / 'dist' / 'customers' / display_name
+    output.mkdir(parents=True, exist_ok=True)
+    # Customer strings are never interpolated into installer directives or shell commands.
+    script = work / 'installer.iss'
+    script.write_text(f'''[Setup]
+AppId=POSCashier-{edition_id}
+AppName={display_name}
+AppVersion=1.1.0
+DefaultDirName={{autopf}}\\{display_name}
+DefaultGroupName={display_name}
+OutputDir={output}
+OutputBaseFilename={display_name}-Setup
+Compression=lzma2
+SolidCompression=yes
+PrivilegesRequired=admin
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+UninstallDisplayIcon={{app}}\\{display_name}.exe
+[Files]
+Source: "{work / 'dist' / 'POSCashier' / '*'}"; DestDir: "{{app}}"; Flags: ignoreversion recursesubdirs createallsubdirs
+[Icons]
+Name: "{{group}}\\{display_name}"; Filename: "{{app}}\\{display_name}.exe"
+Name: "{{autodesktop}}\\{display_name}"; Filename: "{{app}}\\{display_name}.exe"
+[Run]
+Filename: "{{app}}\\{display_name}.exe"; Description: "تشغيل {display_name}"; Flags: nowait postinstall skipifsilent
+''', encoding='utf-8-sig')
+    subprocess.run([compiler, str(script)], check=True, cwd=ROOT)
+    return output / f'{display_name}-Setup.exe'
+
+
+if __name__ == '__main__':
+    if hasattr(sys.stdout, 'reconfigure'): sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('edition', type=Path)
+    parser.add_argument('--iscc')
+    args = parser.parse_args()
+    print(build(args.edition, args.iscc))

@@ -5,6 +5,8 @@ import '../services/session_service.dart';
 import '../services/permissions_service.dart';
 import '../services/theme_service.dart';
 import 'auth_screen.dart';
+import 'support_screen.dart';
+import '../services/system_settings_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,16 +15,18 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _url = TextEditingController();
-  bool _busy = false;
-  Map<String, dynamic> _health = {};
-  String? _pendingDb;
+  bool _busy = true;
+  String? _error;
+  int _revision = 0;
+  Map<String, dynamic> _settings = {}, _tabs = {}, _presets = {};
+  final _name = TextEditingController(),
+      _phone = TextEditingController(),
+      _address = TextEditingController();
   @override
   void initState() {
     super.initState();
-    _url.text = ApiService.baseUrl;
     ThemeService.themeModeNotifier.addListener(_changed);
-    _check();
+    _load();
   }
 
   void _changed() {
@@ -31,116 +35,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
-    _url.dispose();
+    _name.dispose();
+    _phone.dispose();
+    _address.dispose();
     ThemeService.themeModeNotifier.removeListener(_changed);
     super.dispose();
   }
 
-  void _message(String text) {
-    if (mounted)
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
-
-  Future<void> _check() async {
-    setState(() => _busy = true);
-    final h = await ApiService.checkHealth();
-    if (mounted)
-      setState(() {
-        _health = h;
-        _busy = false;
-      });
-  }
-
-  Future<void> _server() async {
-    final raw = _url.text.trim().replaceFirst(RegExp(r'/+$'), '');
-    final uri = Uri.tryParse(raw);
-    if (uri == null ||
-        !['http', 'https'].contains(uri.scheme) ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasQuery ||
-        uri.hasFragment ||
-        (uri.path.isNotEmpty && uri.path != '/')) {
-      _message('أدخل عنوان السيرفر مثل http://127.0.0.1:5000');
-      return;
-    }
-    setState(() => _busy = true);
-    final health = await ApiService.checkHealth(url: raw);
-    if (!mounted) return;
-    setState(() => _busy = false);
-    if (health['server'] != 'online' || health['db_connected'] != true) {
-      _message(
-        'تعذر الاتصال بالسيرفر وقاعدة بياناته. لم يتغير العنوان الحالي.',
-      );
-      return;
-    }
-    if (raw == ApiService.baseUrl) {
-      _message('الاتصال يعمل');
-      return;
-    }
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تغيير السيرفر؟'),
-        content: const Text(
-          'سيتم تسجيل الخروج للاتصال بالسيرفر الجديد. أكمل سلة البيع المباشر قبل المتابعة.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('تغيير الاتصال'),
-          ),
-        ],
-      ),
-    );
-    if (yes != true) return;
-    await ApiService.logout();
-    await SessionService.clearSession();
-    ApiService.baseUrl = raw;
-    SessionService.saveServerUrl(raw);
-    if (mounted)
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
-        (_) => false,
-      );
-  }
-
-  Future<void> _database(String type) async {
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('حفظ اختيار قاعدة البيانات؟'),
-        content: Text(
-          'سيتم اختيار $type عند إعادة تشغيل السيرفر. لا يتم نقل المنتجات والمبيعات تلقائياً بين القواعد. تأكد من تجهيز القاعدة المطلوبة.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('إلغاء'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('حفظ الاختيار'),
-          ),
-        ],
-      ),
-    );
-    if (yes != true || !mounted) return;
-    setState(() => _busy = true);
-    final ok = await ApiService.switchDatabase(type);
-    if (!mounted) return;
+  Future<void> _load() async {
     setState(() {
-      _busy = false;
-      if (ok) _pendingDb = type;
+      _busy = true;
+      _error = null;
     });
-    _message(
-      ok ? 'تم حفظ الاختيار. أعد تشغيل السيرفر لتطبيقه.' : ApiService.lastError,
-    );
+    try {
+      final data = await ApiService.businessRequest('/api/settings');
+      if (!mounted) return;
+      SystemSettingsService.apply(data);
+      setState(() {
+        _settings = Map<String, dynamic>.from(data['settings']);
+        _settings['tabs'] = Map<String, dynamic>.from(_settings['tabs']);
+        _revision = data['revision'];
+        _tabs = Map<String, dynamic>.from(data['tabs']);
+        _presets = Map<String, dynamic>.from(data['presets']);
+        _name.text = _settings['business_name'];
+        _phone.text = _settings['business_phone'];
+        _address.text = _settings['business_address'];
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final value = {
+        ..._settings,
+        'business_name': _name.text.trim(),
+        'business_phone': _phone.text.trim(),
+        'business_address': _address.text.trim(),
+      };
+      final result = await ApiService.businessRequest(
+        '/api/settings',
+        method: 'PUT',
+        body: {'settings': value, 'revision': _revision},
+      );
+      if (!mounted) return;
+      SystemSettingsService.apply(result);
+      setState(() => _revision = result['revision']);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم حفظ إعدادات النشاط')));
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _password() async {
@@ -352,89 +307,136 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          _panel(
-            'حالة الاتصال',
+          if (appPermissions.canManageSettings) _panel(
+            'الدعم والصيانة',
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (_busy)
-                  const LinearProgressIndicator()
-                else
-                  Text(
-                    _health['db_connected'] == true
-                        ? 'السيرفر وقاعدة البيانات متصلان'
-                        : 'الاتصال غير متاح',
-                    style: TextStyle(
-                      color: _health['db_connected'] == true
-                          ? AppColors.stockHighText
-                          : AppColors.danger,
-                    ),
-                  ),
-                const SizedBox(height: 8),
-                Text(
-                  'قاعدة البيانات الفعلية: ${_health['db_type'] ?? 'غير معروفة'}',
+                const Text(
+                  'الفحص المحلي والنسخ الاحتياطي متاحان. الاتصال عن بُعد سيُتاح بعد تجهيز خادم الدعم وبموافقتك لكل جلسة.',
                 ),
-                TextButton.icon(
-                  onPressed: _busy ? null : _check,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('فحص الاتصال'),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SupportScreen()),
+                  ),
+                  icon: const Icon(Icons.headset_mic_outlined),
+                  label: const Text('فتح مركز الدعم الفني والصيانة'),
                 ),
               ],
             ),
           ),
-          if (appPermissions.canManageSettings) ...[
+          if (_busy) const LinearProgressIndicator(),
+          if (_error != null) ...[
+            Text(_error!, style: const TextStyle(color: AppColors.danger)),
+            TextButton(
+              onPressed: _busy ? null : _load,
+              child: const Text('إعادة تحميل الإعدادات'),
+            ),
+          ],
+          if (appPermissions.canManageSettings && _settings.isNotEmpty) ...[
             _panel(
-              'اتصال السيرفر',
+              'بيانات النشاط',
               Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   TextField(
-                    controller: _url,
+                    controller: _name,
                     enabled: !_busy,
-                    textDirection: TextDirection.ltr,
-                    decoration: const InputDecoration(
-                      labelText: 'عنوان السيرفر',
-                      border: OutlineInputBorder(),
-                    ),
+                    maxLength: 120,
+                    decoration: const InputDecoration(labelText: 'اسم النشاط'),
                   ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _server,
-                    icon: const Icon(Icons.link),
-                    label: const Text('فحص وحفظ الاتصال'),
+                  TextField(
+                    controller: _phone,
+                    enabled: !_busy,
+                    maxLength: 40,
+                    decoration: const InputDecoration(labelText: 'رقم الهاتف'),
+                  ),
+                  TextField(
+                    controller: _address,
+                    enabled: !_busy,
+                    maxLength: 300,
+                    decoration: const InputDecoration(labelText: 'العنوان'),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: _settings['business_type'],
+                    decoration: const InputDecoration(labelText: 'نوع النشاط'),
+                    items: _presets.entries
+                        .map(
+                          (e) => DropdownMenuItem(
+                            value: e.key,
+                            child: Text('${e.value}'),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(() {
+                            _settings['business_type'] = value;
+                            _settings['tabs']['tables'] =
+                                value == 'restaurant' || value == 'general';
+                            if (_settings['tabs']['tables'] == true)
+                              _settings['tabs']['sales'] = true;
+                          }),
+                  ),
+                  const Text(
+                    'اختيار مطعم يُظهر الطاولات؛ السوبر ماركت والمتجر يخفيانها. يمكن تعديل التبويبات أدناه.',
                   ),
                 ],
               ),
             ),
             _panel(
-              'قاعدة البيانات',
+              'إظهار وإخفاء التبويبات',
+              Column(
+                children: [
+                  const Text(
+                    'الإعدادات تبقى متاحة دائماً. إخفاء التبويب لا يغيّر صلاحيات الموظفين ولا يحذف البيانات. أكمل طلبات الطاولات المفتوحة قبل إخفائها.',
+                  ),
+                  for (final tab in _tabs.entries)
+                    SwitchListTile(
+                      title: Text('${tab.value}'),
+                      value: _settings['tabs'][tab.key] == true,
+                      onChanged: _busy
+                          ? null
+                          : (value) => setState(() {
+                              _settings['tabs'][tab.key] = value;
+                              if (tab.key == 'sales' && !value)
+                                _settings['tabs']['tables'] = false;
+                              if (tab.key == 'tables' && value)
+                                _settings['tabs']['sales'] = true;
+                            }),
+                    ),
+                ],
+              ),
+            ),
+            _panel(
+              'الدخول والأمان',
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'يُطبَّق الاختيار بعد إعادة تشغيل السيرفر، ولا ينقل البيانات بين القواعد.',
+                  Text('مدة جلسة الدخول: ${_settings['session_hours']} ساعة'),
+                  Slider(
+                    value: (_settings['session_hours'] as num).toDouble(),
+                    min: 1,
+                    max: 72,
+                    divisions: 71,
+                    label: '${_settings['session_hours']} ساعة',
+                    onChanged: _busy
+                        ? null
+                        : (v) => setState(
+                            () => _settings['session_hours'] = v.round(),
+                          ),
                   ),
-                  if (_pendingDb != null)
-                    Text(
-                      'بانتظار إعادة التشغيل: $_pendingDb',
-                      style: TextStyle(color: AppColors.primaryLight),
-                    ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      for (final type in ['sqlite', 'mysql'])
-                        OutlinedButton(
-                          onPressed: _busy || _health['db_type'] == type
-                              ? null
-                              : () => _database(type),
-                          child: Text(type.toUpperCase()),
-                        ),
-                    ],
+                  const Text(
+                    'تُطبّق المدة على جلسات الدخول الجديدة. صلاحيات كل موظف تُدار من صفحة الموظفين والأدوار.',
                   ),
                 ],
               ),
+            ),
+            FilledButton.icon(
+              onPressed: _busy ? null : _save,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('حفظ إعدادات النظام'),
             ),
           ],
         ],

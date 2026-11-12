@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/permissions_service.dart';
+import '../screens/exports_screen.dart';
 
 class ExportMenu extends StatefulWidget {
   const ExportMenu({
@@ -24,27 +26,49 @@ class _ExportMenuState extends State<ExportMenu> {
     if (busy) return;
     setState(() => busy = true);
     try {
-      await ApiService.exportFile(
+      final file = await ApiService.exportFile(
         widget.path,
         format,
         query: widget.query,
         body: widget.body,
       );
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم تجهيز الملف وتنزيله.')),
+          SnackBar(
+            content: Text(
+              file['download'] == true
+                  ? 'أُرسل الملف إلى تنزيلات المتصفح.'
+                  : 'تم حفظ الملف في: ${file['folder']}',
+            ),
+            duration: const Duration(seconds: 12),
+            action: SnackBarAction(
+              label: file['download'] == true ? 'مكان الملف' : 'عرض الملف',
+              onPressed: () => showSavedExport(context, file),
+            ),
+          ),
         );
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('$e'.replaceFirst('Exception: ', ''))),
         );
+      }
     }
     if (mounted) setState(() => busy = false);
   }
 
   @override
-  Widget build(BuildContext context) => busy
+  Widget build(BuildContext context) =>
+      !appPermissions.has(
+        widget.path.contains('/reports')
+            ? 'exports.reports'
+            : widget.path.contains('/cart')
+            ? 'exports.cart'
+            : 'exports.orders',
+      )
+      ? const SizedBox.shrink()
+      : busy
       ? const Padding(
           padding: EdgeInsets.all(12),
           child: SizedBox(
@@ -60,8 +84,14 @@ class _ExportMenuState extends State<ExportMenu> {
           icon: const Icon(Icons.file_download_outlined),
           itemBuilder: (_) => const [
             PopupMenuItem(value: 'pdf', child: Text('PDF • مستند')),
-            PopupMenuItem(value: 'xlsx', child: Text('Excel • جداول')),
-            PopupMenuItem(value: 'csv', child: Text('CSV • بيانات جدولية')),
+            PopupMenuItem(
+              value: 'xlsx',
+              child: Text('Excel XLSX • ملف منسق من اليمين لليسار'),
+            ),
+            PopupMenuItem(
+              value: 'csv',
+              child: Text('CSV • بيانات نصية بدون تنسيق'),
+            ),
             PopupMenuItem(value: 'json', child: Text('JSON • بيانات كاملة')),
           ],
         );

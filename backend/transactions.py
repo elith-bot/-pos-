@@ -5,6 +5,7 @@ from flask import request, jsonify, g
 from sqlalchemy.exc import IntegrityError
 from models import db, Product, Sale, SaleItem, Table, ActiveOrder, ActiveOrderItem
 from security import failure
+from role_access import has_permission
 
 def number(value):
     try:
@@ -27,10 +28,16 @@ def normalized_items(data):
         qty = number(item.get('quantity', 0))
         price = number(item.get('unit_selling_price', product.selling_price))
         discount = number(item.get('discount', 0))
+        if not has_permission('sales.price') and abs(price-product.selling_price)>0.000001:
+            raise ValueError('لا تملك صلاحية تغيير سعر البيع.')
+        if not has_permission('sales.discount') and discount != 0:
+            raise ValueError('لا تملك صلاحية تطبيق الخصم.')
         if qty <= 0 or price < 0 or discount > price:
             raise ValueError('الكمية يجب أن تكون موجبة، والسعر النهائي لا يمكن أن يكون سالباً.')
         effective = qty / product.weight_unit_grams if product.is_weight and product.weight_unit_grams > 0 else qty
         result.append((product, qty, price, discount, effective))
+    if not has_permission('sales.discount') and number(data.get('global_discount',0)) != 0:
+        raise ValueError('لا تملك صلاحية تعديل مجموع الطلب.')
     return result
 
 def save_table_transaction(table_id):

@@ -7,6 +7,7 @@ import '../widgets/section_tabs.dart';
 import '../widgets/sale_details_dialog.dart';
 import '../services/permissions_service.dart';
 import '../widgets/export_menu.dart';
+import '../widgets/report_datetime_picker.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key, this.isActive = true});
@@ -26,12 +27,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   double hours = 4;
   Map<String, dynamic> data = {};
   final periods = const {
+    'all': 'كل الفترات',
     'today': 'اليوم',
     'yesterday': 'أمس',
     'week': 'آخر 7 أيام',
     'month': 'هذا الشهر',
     'year': 'هذه السنة',
-    'all': 'كل الفترات',
     'custom': 'مخصصة',
     'hours': 'ساعات مخصصة',
   };
@@ -112,36 +113,22 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Future<void> pick(bool isStart) async {
-    final d = await showDatePicker(
-      context: context,
-      initialDate: isStart
-          ? (start ?? DateTime.now())
-          : (end ?? DateTime.now()),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+    final chosen = await pickReportDateTime(
+      context,
+      initial: (isStart ? start : end) ?? DateTime.now(),
+      title: isStart
+          ? 'بداية الفترة: التاريخ والوقت'
+          : 'نهاية الفترة: التاريخ والوقت',
     );
-    if (d != null) {
-      if (!mounted) return;
-      final t = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.fromDateTime(
-          (isStart ? start : end) ?? DateTime.now(),
-        ),
-        builder: (ctx, child) => MediaQuery(
-          data: MediaQuery.of(ctx).copyWith(alwaysUse24HourFormat: true),
-          child: child!,
-        ),
-      );
-      if (t == null || !mounted) return;
-      final chosen = DateTime(d.year, d.month, d.day, t.hour, t.minute);
-      setState(() {
-        if (isStart)
-          start = chosen;
-        else
-          end = chosen;
-      });
-      if (start != null && end != null) load();
-    }
+    if (chosen == null || !mounted) return;
+    setState(() {
+      if (isStart) {
+        start = chosen;
+      } else {
+        end = chosen;
+      }
+    });
+    if (start != null && end != null) load();
   }
 
   Widget card(String title, String value, IconData icon, Color color) =>
@@ -782,13 +769,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                   Icons.payments,
                                   AppColors.success,
                                 ),
-                                card(
+                                if(appPermissions.canViewProfit) card(
                                   'الربح قبل المصاريف',
                                   money(stats['gross_profit']),
                                   Icons.trending_up,
                                   AppColors.primaryLight,
                                 ),
-                                card(
+                                if(appPermissions.canViewProfit) card(
                                   'صافي الربح / الخسارة بعد المصاريف',
                                   money(stats['final_net_profit']),
                                   Icons.account_balance,
@@ -806,7 +793,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                   Icons.shopping_basket,
                                   Colors.teal,
                                 ),
-                                card(
+                                if(appPermissions.canViewProfit) card(
                                   'هامش الربح',
                                   '${stats['profit_margin_pct'] ?? 0}%',
                                   Icons.percent,
@@ -830,7 +817,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                   Icons.sell_outlined,
                                   AppColors.primaryLight,
                                 ),
-                                card(
+                                if(appPermissions.canViewPurchasePrice) card(
                                   'كلفة شراء البضاعة المباعة',
                                   money(stats['total_cost']),
                                   Icons.inventory_outlined,
@@ -842,31 +829,31 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                   Icons.receipt_long_outlined,
                                   AppColors.danger,
                                 ),
-                                card(
+                                if(appPermissions.canViewPurchasePrice) card(
                                   'شراء وتوريد المخزون',
                                   money(stats['total_supply']),
                                   Icons.local_shipping_outlined,
                                   Colors.teal,
                                 ),
-                                card(
+                                if(appPermissions.canViewPurchasePrice) card(
                                   'المصاريف والتوريد معاً',
                                   money(stats['total_outflows']),
                                   Icons.payments_outlined,
                                   Colors.orange,
                                 ),
-                                card(
+                                if(appPermissions.canViewPurchasePrice) card(
                                   'البيع ناقص المصاريف والتوريد',
                                   money(stats['sales_less_outflows']),
                                   Icons.swap_vert,
                                   Colors.blueGrey,
                                 ),
-                                card(
+                                if(appPermissions.canViewProfit) card(
                                   'الربح الصافي الموجب',
                                   money(stats['profit']),
                                   Icons.trending_up,
                                   AppColors.success,
                                 ),
-                                card(
+                                if(appPermissions.canViewProfit) card(
                                   'الخسارة',
                                   money(stats['loss']),
                                   Icons.trending_down,

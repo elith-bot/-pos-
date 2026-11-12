@@ -1,5 +1,4 @@
-import 'dart:html' as html;
-import 'package:flutter/foundation.dart';
+import 'local_store_native.dart' if (dart.library.html) 'local_store_web.dart';
 import 'package:flutter/material.dart';
 
 class ThemeService {
@@ -12,8 +11,8 @@ class ThemeService {
 
   static void init() {
     try {
-      if (kIsWeb) {
-        final saved = html.window.localStorage[_storageKey];
+      if (true) {
+        final saved = store[_storageKey];
         if (saved == 'dark') {
           themeModeNotifier.value = ThemeMode.dark;
           return;
@@ -31,8 +30,8 @@ class ThemeService {
   static void setTheme(ThemeMode mode) {
     themeModeNotifier.value = mode;
     try {
-      if (kIsWeb) {
-        html.window.localStorage[_storageKey] =
+      if (true) {
+        store[_storageKey] =
             mode == ThemeMode.light ? 'light' : 'dark';
       }
     } catch (_) {}

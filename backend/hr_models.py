@@ -1,7 +1,7 @@
-"""HR records are separate from login accounts; no account is required for staff."""
+"""HR records linked to login accounts, retaining legacy unlinked staff records."""
 from datetime import datetime
 import json
-from models import db
+from models import db, User
 
 
 class Staff(db.Model):
@@ -20,6 +20,8 @@ class Staff(db.Model):
         result = {k: getattr(self, k) for k in ('id', 'user_id', 'name', 'job_title', 'phone', 'start_date', 'base_salary', 'active', 'notes')}
         contract = StaffContract.query.filter_by(staff_id=self.id).order_by(StaffContract.effective_month.desc()).first()
         result['contract'] = json.loads(contract.terms) if contract else {}
+        user = db.session.get(User, self.user_id) if self.user_id else None
+        result['account'] = user.to_dict() if user else None
         return result
 
 
