@@ -21,19 +21,24 @@ def compile_backend(work):
         for node in ast.walk(ast.parse(source.read_text(encoding='utf-8'))):
             if isinstance(node, ast.Import): imports.update(n.name for n in node.names)
             if isinstance(node, ast.ImportFrom) and node.module: imports.add(node.module)
-    source_folder = work/'src'
-    source_folder.mkdir(exist_ok=True)
-    for source in sources: shutil.copy2(source, source_folder/source.name)
-    setup = work/'compile_setup.py'
-    setup.write_text("from setuptools import setup, Extension\nfrom Cython.Build import cythonize\n" +
-        "setup(ext_modules=cythonize(" + repr([p.name for p in sources]) +
-        ", build_dir=" + repr(str(work/'generated-c')) +
-        ", compiler_directives={'language_level':3,'binding':True,'embedsignature':False,'emit_code_comments':False,'annotation_typing':False}, annotate=False))\n", encoding='utf-8')
-    env = dict(os.environ)
-    env['PYTHONUTF8'] = '1'
-    env['CL'] = env.get('CL', '') + ' /utf-8'
-    env['PYTHONPATH'] = str(ROOT/'release-build/tooling')
-    subprocess.run([sys.executable,str(setup),'build_ext','--build-lib',str(compiled),'--build-temp',str(work/'objects')],env=env,cwd=source_folder,check=True)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix='moon-cc-') as temporary:
+        stage = Path(temporary).resolve()
+        source_folder = stage/'src'
+        source_folder.mkdir()
+        for source in sources: shutil.copy2(source, source_folder/source.name)
+        setup = stage/'setup.py'
+        setup.write_text("from setuptools import setup\nfrom Cython.Build import cythonize\n" +
+            "setup(ext_modules=cythonize(" + repr([p.name for p in sources]) +
+            ", build_dir=" + repr(str(stage/'c')) +
+            ", compiler_directives={'language_level':3,'binding':True,'embedsignature':False,'emit_code_comments':False,'annotation_typing':False}, annotate=False))\n", encoding='utf-8')
+        env = dict(os.environ)
+        env['PYTHONUTF8'] = '1'
+        env['CL'] = env.get('CL', '') + ' /utf-8'
+        env['PYTHONPATH'] = str(ROOT/'release-build/tooling')
+        subprocess.run([sys.executable,str(setup),'build_ext','--build-lib',str(stage/'bin'),'--build-temp',str(stage/'obj')],env=env,cwd=source_folder,check=True)
+        for library in (stage/'bin').glob('*.pyd'):
+            shutil.copy2(library, compiled/library.name)
     modules = [p.stem for p in sources]
     for module in modules:
         if not list(compiled.glob(module+'.*.pyd')): raise RuntimeError('Missing compiled module: '+module)
