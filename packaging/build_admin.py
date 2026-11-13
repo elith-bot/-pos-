@@ -6,7 +6,7 @@ import shutil
 import sys
 
 root = Path(__file__).resolve().parents[1]
-output_root = root / 'dist' / 'updated-admin'
+output_root = root / 'dist' / 'protected-admin'
 env = dict(os.environ)
 env['PYTHONPATH'] = os.pathsep.join([str(root / 'release-build' / 'tooling'), str(root / 'backend'), str(root / 'admin_console')])
 subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed',

@@ -141,8 +141,8 @@ def create_app(test_config=None):
                         created_at=p.created_at or datetime.utcnow()
                     ))
             db.session.commit()
-        except Exception as e:
-            print(f"Database initialization warning: {e}")
+        except Exception as initialization_error:
+            print(f"Database initialization warning: {initialization_error}")
 
     @app.route('/api/health', methods=['GET'])
     def health_check():

@@ -227,7 +227,8 @@ def install_hr_finance(app):
         if not row:
             row = Attendance(staff_id=s.id, day=day)
             db.session.add(row)
-        row.status, row.check_in, row.check_out = status, *times
+        row.status = status
+        row.check_in, row.check_out = times
         row.notes, row.recorded_by = text(d.get('notes'), 2000), g.current_user.full_name
         db.session.commit()
         return jsonify(attendance=row.to_dict())
