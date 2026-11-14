@@ -49,7 +49,7 @@ def build(edition, compiler=None):
     env = dict(os.environ)
     env['PYTHONPATH'] = os.pathsep.join([str(ROOT / 'release-build' / 'tooling'), str(compiled), str(work)])
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed', '--uac-admin',
-        '--name', 'POSCashier', '--distpath', str(work / 'dist'), '--workpath', str(work / 'build'), '--specpath', str(work),
+        '--name', 'POSCashier', '--exclude-module', 'tkinter', '--exclude-module', '_tkinter', '--distpath', str(work / 'dist'), '--workpath', str(work / 'build'), '--specpath', str(work),
         '--paths', str(compiled), '--paths', str(work),
         *[value for module in hidden_imports for value in ('--hidden-import', module)],
         '--hidden-import', 'sqlalchemy.dialects.sqlite', '--hidden-import', 'sqlalchemy.dialects.mysql.pymysql',
@@ -85,7 +85,8 @@ def build(edition, compiler=None):
 AppId=POSCashier-{edition_id}
 AppName={display_name}
 AppVersion=1.1.0
-DefaultDirName={{autopf}}\\{display_name}
+DefaultDirName={{autopf}}\\POS Cashier\\{display_name}
+UsePreviousAppDir=no
 DefaultGroupName={display_name}
 OutputDir={output}
 OutputBaseFilename={display_name}-Setup
@@ -101,7 +102,7 @@ Source: "{work / 'dist' / 'POSCashier' / '*'}"; DestDir: "{{app}}"; Flags: ignor
 Name: "{{group}}\\{display_name}"; Filename: "{{app}}\\{display_name}.exe"
 Name: "{{autodesktop}}\\{display_name}"; Filename: "{{app}}\\{display_name}.exe"
 [Run]
-Filename: "{{app}}\\{display_name}.exe"; Description: "تشغيل {display_name}"; Flags: nowait postinstall skipifsilent
+Filename: "{{app}}\\{display_name}.exe"; Description: "تشغيل {display_name}"; Flags: nowait postinstall skipifsilent runascurrentuser
 ''', encoding='utf-8-sig')
     subprocess.run([compiler, str(script)], check=True, cwd=ROOT)
     return output / f'{display_name}-Setup.exe'

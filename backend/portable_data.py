@@ -9,6 +9,17 @@ def prepare_data(installation, edition_id):
     data = Path(installation) / 'Data'
     data.mkdir(parents=True, exist_ok=True)
     old = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'POS Cashier' / edition_id
+    installation = Path(installation).resolve()
+    if installation.parent.name == 'POS Cashier':
+        legacy = installation.parent.parent / installation.name
+        manifest = legacy/'_internal'/'deployment.pos'
+        if manifest.is_file() and (legacy/'Data'/'cashier.db').is_file():
+            from license_protocol import verify
+            from trusted_license import PUBLIC_KEY
+            payload = verify(manifest.read_text(encoding='utf-8'), PUBLIC_KEY, 'deployment')
+            if payload['edition_id'] == edition_id:
+                old = legacy/'Data'
+
     target = data / 'cashier.db'
     if not target.exists() and (old / 'cashier.db').is_file():
         temporary = data / 'cashier-migration.tmp'
