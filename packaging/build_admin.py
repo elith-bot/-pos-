@@ -1,25 +1,29 @@
 """Build only the vendor desktop tool, with no private keys or customer files."""
 import os
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import shutil
 import sys
 
 root = Path(__file__).resolve().parents[1]
+release = json.loads((root / 'VERSION.json').read_text(encoding='utf-8'))
+release_name = f"moon-v{release['version']}-step-{release['step']:03d}-{release['slug']}"
+executable_name = f"moon-admin-v{release['version']}-step-{release['step']:03d}"
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--output-root', type=Path, default=root / 'dist' / 'protected-admin')
+parser.add_argument('--output-root', type=Path, default=root / 'dist' / release_name)
 output_root = parser.parse_args().output_root.resolve()
 env = dict(os.environ)
 env['PYTHONPATH'] = os.pathsep.join([str(root / 'release-build' / 'tooling'), str(root / 'backend'), str(root / 'admin_console')])
 subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed',
-    '--name', 'POSAdmin', '--distpath', str(output_root), '--workpath', str(root / 'release-build' / 'admin'),
+    '--name', executable_name, '--distpath', str(output_root), '--workpath', str(root / 'release-build' / 'admin'),
     '--specpath', str(root / 'release-build'), '--paths', str(root / 'backend'), '--paths', str(root / 'admin_console'),
     str(root / 'admin_console' / 'app.py')], check=True, env=env, cwd=root)
 
 # Build kit belongs only to the vendor package. Allowlist source; never copy .env,
 # business databases, exports, signing keys or the administrator's customer records.
-kit = output_root / 'POSAdmin' / 'build-kit'
+kit = output_root / executable_name / 'build-kit'
 for folder in ['backend', 'packaging']:
     for source in (root / folder).glob('*.py'):
         if source.name.startswith('test_'): continue
@@ -29,3 +33,4 @@ for folder in ['backend', 'packaging']:
 for relative in ['frontend/build/windows/x64/runner/Release', 'frontend/assets/fonts', 'release-build/tooling']:
     shutil.copytree(root / relative, kit / relative, dirs_exist_ok=True)
 shutil.copy2(root / 'backend' / 'requirements.txt', kit / 'backend' / 'requirements.txt')
+shutil.copy2(root / 'VERSION.json', kit / 'VERSION.json')

@@ -28,6 +28,7 @@ Thumbs.db
 **/POS Exports/
 release-build/
 dist/
+local-backups/
 __pycache__/
 backend/logs/
 **/.key_secret
