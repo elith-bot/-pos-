@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
-  "step": 2,
-  "slug": "organized-releases",
-  "description_ar": "تنظيم النسخ واعتماد أسماء واضحة للإصدارات ونقاط الرجوع"
+  "version": "1.1.2",
+  "step": 3,
+  "slug": "single-build-folder",
+  "description_ar": "اعتماد تحديث مجلد الأدمن الحالي دون إنشاء نسخ إضافية"
 }
