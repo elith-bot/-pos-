@@ -66,34 +66,39 @@ class AdminApp(tk.Tk):
         scrollbar = ttk.Scrollbar(self, orient='vertical', command=canvas.yview)
         self.main_content = tk.Frame(canvas, bg='#F8FAFC')
         self.main_content.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0, 0), window=self.main_content, anchor='nw', width=930)
+        content_window = canvas.create_window((0, 0), window=self.main_content, anchor='nw', width=930)
+        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(content_window, width=e.width))
         canvas.configure(yscrollcommand=scrollbar.set)
 
         scrollbar.pack(side='left', fill='y')
         canvas.pack(side='right', fill='both', expand=True, padx=(10, 20), pady=5)
 
         # 1. Customer & Owner Section
-        sec_customer = ttk.LabelFrame(self.main_content, text='  1. بيانات الزبون وحساب المالك الأساسي  ')
+        sec_customer = ttk.LabelFrame(self.main_content, text='  1. معلومات الزبون  ')
         sec_customer.pack(fill='x', pady=8)
 
         # Customer fields grid
-        self._add_grid_field(sec_customer, 'owner_name', 'اسم المالك (صاحب الحساب):', row=0, col=0)
+        self._add_grid_field(sec_customer, 'customer_name', 'اسم الزبون:', row=0, col=0)
         self._add_grid_field(sec_customer, 'phone', 'رقم هاتف الزبون:', row=0, col=1)
         self._add_grid_field(sec_customer, 'address', 'المحافظة والعنوان الكامل:', row=1, col=0)
         self._add_grid_field(sec_customer, 'notes', 'الملاحظات والاتفاق:', row=1, col=1)
 
-        ttk.Separator(sec_customer, orient='horizontal').grid(row=2, column=0, columnspan=2, sticky='ew', pady=10)
+        sec_owner = ttk.LabelFrame(self.main_content, text='  2. معلومات المالك والأدمن — الحساب الأول  ')
+        sec_owner.pack(fill='x', pady=8)
+        self._add_grid_field(sec_owner, 'owner_name', 'اسم المالك (صاحب الحساب الأول):', row=0, col=0)
+        self._add_grid_field(sec_owner, 'owner_phone', 'هاتف المالك (اسم المستخدم الأول):', row=0, col=1)
+        self._add_grid_field(sec_owner, 'owner_password', 'كلمة مرور الحساب الأول (8 أحرف على الأقل):', row=1, col=0, secret=True)
+        ttk.Label(sec_owner, text='يُنشأ الحساب الأول بدور مالك لإدارة الكاشير.', anchor='e').grid(row=2, column=0, columnspan=2, sticky='ew', padx=10, pady=5)
 
-        self._add_grid_field(sec_customer, 'name', 'اسم المتجر / النشاط (يظهر بالنظام والملفات):', row=4, col=0)
-        self._add_grid_field(sec_customer, 'vendor_name', 'اسم شركتنا:', row=4, col=1)
+        sec_cashier = ttk.LabelFrame(self.main_content, text='  3. معلومات الكاشير وإعداداته الافتراضية  ')
+        sec_cashier.pack(fill='x', pady=8)
+        self._add_grid_field(sec_cashier, 'name', 'اسم المتجر / النشاط (يظهر بالنظام والملفات):', row=0, col=0)
+        self._add_grid_field(sec_cashier, 'vendor_name', 'اسم شركتنا:', row=0, col=1)
         self.fields['vendor_name'].set('moon')
-        # Owner fields
-        self._add_grid_field(sec_customer, 'owner_phone', 'هاتف المالك (اسم المستخدم الأول):', row=3, col=0)
-        self._add_grid_field(sec_customer, 'owner_password', 'رمز المالك الأول (8 أحرف على الأقل):', row=3, col=1, secret=True)
 
         # 2. Activity & Presets Section
-        sec_activity = ttk.LabelFrame(self.main_content, text='  2. إعدادات النشاط والتبويبات الافتراضية للنسخة  ')
-        sec_activity.pack(fill='x', pady=8)
+        sec_activity = tk.Frame(sec_cashier, bg='#FFFFFF')
+        sec_activity.grid(row=1, column=0, columnspan=2, sticky='ew', pady=8)
 
         row_act = tk.Frame(sec_activity, bg='#FFFFFF')
         row_act.pack(fill='x', pady=5)
@@ -122,7 +127,7 @@ class AdminApp(tk.Tk):
             cb = ttk.Checkbutton(tabs_frame, text=label, variable=var)
             cb.pack(side='right', padx=8)
 
-        role_bar = tk.Frame(self.main_content, bg='#F8FAFC'); role_bar.pack(fill='x', pady=8)
+        role_bar = tk.Frame(sec_cashier, bg='#FFFFFF'); role_bar.grid(row=2, column=0, columnspan=2, sticky='ew', pady=8)
         self.role_combo = ttk.Combobox(role_bar, state='readonly', values=[r['name'] for r in self.roles]); self.role_combo.current(0); self.role_combo.pack(side='right')
         ttk.Button(role_bar, text='تعديل صلاحيات الدور', command=self.edit_role).pack(side='right', padx=6)
         ttk.Button(role_bar, text='إضافة دور', command=lambda: self.edit_role(new=True)).pack(side='right', padx=6)
@@ -144,7 +149,7 @@ class AdminApp(tk.Tk):
         self.status_label.pack(fill='x', pady=5)
 
         # 4. Activation Section (Direct in the same window)
-        sec_act = ttk.LabelFrame(self.main_content, text='  3. تفعيل نسخة الزبون (أوفلاين بواسطة كود طلب التفعيل)  ')
+        sec_act = ttk.LabelFrame(self.main_content, text='  4. تفعيل نسخة الزبون (أوفلاين بواسطة كود طلب التفعيل)  ')
         sec_act.pack(fill='x', pady=8)
 
         tk.Label(sec_act, text='الصق كود طلب التفعيل الظاهر على شاشة جهاز الزبون، ثم اضغط زر "إصدار رمز التفعيل":', font=('Segoe UI', 9), bg='#FFFFFF', anchor='e').pack(fill='x', pady=(2, 6))
@@ -241,8 +246,11 @@ class AdminApp(tk.Tk):
         if not self._ensure_key_ready(): return
         values = {k: v.get().strip() for k, v in self.fields.items()}
 
+        if not values['customer_name']:
+            messagebox.showwarning('تنبيه', 'يرجى إدخال اسم الزبون.', parent=self)
+            return
         if not values['name']:
-            messagebox.showwarning('تنبيه', 'يرجى إدخال اسم الزبون / النشاط.', parent=self)
+            messagebox.showwarning('تنبيه', 'يرجى إدخال اسم المتجر / النشاط.', parent=self)
             return
         if not values['phone']:
             messagebox.showwarning('تنبيه', 'يرجى إدخال رقم هاتف الزبون.', parent=self)
@@ -279,7 +287,7 @@ class AdminApp(tk.Tk):
             self.edition = create_edition(
                 self.root_dir / 'editions',
                 self.key,
-                {k: values[k] for k in ['name', 'phone', 'address', 'notes']},
+                {k: values[k] for k in ['name', 'customer_name', 'phone', 'address', 'notes']},
                 dict(name=values['owner_name'], phone=values['owner_phone'], password=self.fields['owner_password'].get()),
                 settings,
                 self.roles, vendor_name=values['vendor_name']

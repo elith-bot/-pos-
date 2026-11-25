@@ -1,12 +1,15 @@
 """Build only the vendor desktop tool, with no private keys or customer files."""
 import os
+import argparse
 from pathlib import Path
 import subprocess
 import shutil
 import sys
 
 root = Path(__file__).resolve().parents[1]
-output_root = root / 'dist' / 'protected-admin'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output-root', type=Path, default=root / 'dist' / 'protected-admin')
+output_root = parser.parse_args().output_root.resolve()
 env = dict(os.environ)
 env['PYTHONPATH'] = os.pathsep.join([str(root / 'release-build' / 'tooling'), str(root / 'backend'), str(root / 'admin_console')])
 subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed',

@@ -35,6 +35,16 @@ class OfflineLicenseTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_customer_contact_is_separate_from_business_and_owner(self):
+        folder = create_edition(self.root, self.key,
+            dict(name='متجر القمر', customer_name='مسؤول الزبون', phone='07700000000', address='بغداد', notes=''),
+            dict(name='صاحب المتجر', phone='07800000000', password='private-test-password'),
+            preset('supermarket'), [], vendor_name='moon')
+        deployment = verify((folder / 'deployment.pos').read_text(encoding='utf-8'), public_pem(self.key), 'deployment')
+        self.assertEqual(deployment['customer']['customer_name'], 'مسؤول الزبون')
+        self.assertEqual(deployment['customer']['name'], 'متجر القمر')
+        self.assertEqual(deployment['owner']['name'], 'صاحب المتجر')
+
     def test_offline_activation_restart_and_no_plain_password(self):
         self.assertFalse(self.manager.status()['active'])
         self.manager.activate(self.token)

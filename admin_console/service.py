@@ -36,7 +36,10 @@ def create_edition(output_root, key, customer, owner, settings, roles, vendor_na
         if not isinstance(customer.get(field), str) or len(customer[field]) > 2000:
             raise ValueError('بيانات الزبون غير صالحة.')
     if not customer['name'].strip():
-        raise ValueError('اسم الزبون مطلوب.')
+        raise ValueError('اسم المتجر / النشاط مطلوب.')
+    if 'customer_name' in customer and (not isinstance(customer['customer_name'], str)
+                                       or not 1 <= len(customer['customer_name'].strip()) <= 120):
+        raise ValueError('اسم الزبون مطلوب وبحد أقصى 120 حرفاً.')
     if not re.fullmatch(r'\+?[0-9]{7,20}', owner.get('phone', '')) or len(owner.get('password', '')) < 8:
         raise ValueError('رقم المالك مطلوب، وكلمة المرور 8 أحرف على الأقل.')
     owner_name = owner.get('name', customer['name']).strip()
