@@ -90,8 +90,20 @@ def install_licensing(app):
 
     @app.before_request
     def license_gate():
-        if request.method == 'OPTIONS' or not request.path.startswith('/api/') or request.endpoint in {'license_status', 'activate_license', 'health_check'}:
+        if request.method == 'OPTIONS' or not request.path.startswith('/api/'):
             return None
+        # Enforce LAN network topology boundaries
+        topology = app.config.get('TOPOLOGY') or (manager.deployment.get('topology') if manager else {})
+        mode = topology.get('mode', 'standalone')
+        if mode == 'server' and request.remote_addr not in {'127.0.0.1', '::1', 'localhost'}:
+            group_id = topology.get('group_id')
+            client_group = request.headers.get('X-POS-Group-ID')
+            if group_id and client_group != group_id:
+                return jsonify(status='error', code='unauthorized_terminal', message='هذا الجهاز غير مصرح له بالاتصال بسيرفر هذا المحل.'), 403
+
+        if request.endpoint in {'license_status', 'activate_license', 'health_check'}:
+            return None
+
         current = status()
         if not current['active']:
             return jsonify(status='error', code='license_required', message=current['message']), 423

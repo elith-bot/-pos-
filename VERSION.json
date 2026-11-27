@@ -1,6 +1,6 @@
 {
-  "version": "1.2.3",
-  "step": 7,
-  "slug": "minimal-build-kit",
-  "description_ar": "تصغير حزمة بناء الأدمن إلى ملفات المشروع المطلوبة فقط"
+  "version": "1.3.0",
+  "step": 8,
+  "slug": "lan-server-terminal-sync",
+  "description_ar": "تفعيل اتصال الكاشير الفرعي بسيرفر المحل ومشاركة قاعدة البيانات عبر الشبكة المحلية"
 }
