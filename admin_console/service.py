@@ -31,7 +31,35 @@ def unlock_key(path, password):
     return key
 
 
-def create_edition(output_root, key, customer, owner, settings, roles, vendor_name=""):
+def _validate_topology(topology):
+    """Validate the signed relationship between a shop server and its terminals."""
+    topology = topology or {}
+    if not isinstance(topology, dict):
+        raise ValueError('إعداد ربط أجهزة الكاشير غير صالح.')
+    mode = topology.get('mode', 'standalone')
+    if mode not in {'standalone', 'server', 'terminal', 'admin'}:
+        raise ValueError('نوع نسخة الكاشير غير صالح.')
+    group_id = topology.get('group_id', '')
+    if not isinstance(group_id, str) or not re.fullmatch(r'[a-f0-9]{32}', group_id):
+        raise ValueError('معرّف مجموعة المحل غير صالح.')
+    terminal_name = topology.get('terminal_name', '')
+    if not isinstance(terminal_name, str) or not 1 <= len(terminal_name.strip()) <= 80:
+        raise ValueError('اسم جهاز الكاشير مطلوب وبحد أقصى 80 حرفاً.')
+    server_edition_id = topology.get('server_edition_id', '')
+    server_address = topology.get('server_address', '')
+    if mode == 'terminal':
+        if not isinstance(server_edition_id, str) or not re.fullmatch(r'[a-f0-9]{32}', server_edition_id):
+            raise ValueError('نسخة الكاشير الفرعي تحتاج معرّف نسخة الكاشير الرئيسي.')
+        if not isinstance(server_address, str) or not re.fullmatch(r'https?://[^\s/]+(?::[0-9]{1,5})?', server_address.strip()):
+            raise ValueError('أدخل عنوان الكاشير الرئيسي مثل http://192.168.1.10:5000.')
+    else:
+        server_edition_id = ''
+        server_address = ''
+    return dict(mode=mode, group_id=group_id, terminal_name=terminal_name.strip(),
+                server_edition_id=server_edition_id, server_address=server_address.strip())
+
+
+def create_edition(output_root, key, customer, owner, settings, roles, vendor_name="", topology=None):
     for field in ['name', 'phone', 'address', 'notes']:
         if not isinstance(customer.get(field), str) or len(customer[field]) > 2000:
             raise ValueError('بيانات الزبون غير صالحة.')
@@ -56,7 +84,8 @@ def create_edition(output_root, key, customer, owner, settings, roles, vendor_na
     payload = dict(kind='deployment', version=1, edition_id=uuid.uuid4().hex,
                    issued_at=datetime.now(timezone.utc).isoformat(), customer=customer,
                    vendor_name=vendor_name.strip(), owner=dict(name=owner_name, phone=owner['phone'], password_hash=generate_password_hash(owner['password'])),
-                   settings=validate_settings(settings), roles=validated_roles)
+                   settings=validate_settings(settings), roles=validated_roles,
+                   topology=_validate_topology(topology or dict(mode='standalone', group_id=uuid.uuid4().hex, terminal_name='كاشير مستقل')))
     folder = Path(output_root) / payload['edition_id']
     folder.mkdir(parents=True, exist_ok=False)
     (folder / 'deployment.pos').write_text(sign(payload, key), encoding='utf-8')

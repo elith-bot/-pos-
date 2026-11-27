@@ -45,6 +45,22 @@ class OfflineLicenseTests(unittest.TestCase):
         self.assertEqual(deployment['customer']['name'], 'متجر القمر')
         self.assertEqual(deployment['owner']['name'], 'صاحب المتجر')
 
+    def test_server_and_terminal_relationship_is_signed_into_each_deployment(self):
+        group_id = 'a' * 32
+        server = create_edition(self.root, self.key,
+            dict(name='مطعم القمر', customer_name='شركة القمر', phone='07700000000', address='بغداد', notes=''),
+            dict(name='المالك', phone='07800000000', password='private-test-password'), preset('restaurant'), [],
+            topology=dict(mode='server', group_id=group_id, terminal_name='الكاشير الرئيسي'))
+        terminal = create_edition(self.root, self.key,
+            dict(name='مطعم القمر', customer_name='شركة القمر', phone='07700000000', address='بغداد', notes=''),
+            dict(name='المالك', phone='07800000000', password='private-test-password'), preset('restaurant'), [],
+            topology=dict(mode='terminal', group_id=group_id, terminal_name='كاشير الصالة',
+                          server_edition_id=server.name, server_address='http://192.168.1.10:5000'))
+        payload = verify((terminal / 'deployment.pos').read_text(encoding='utf-8'), public_pem(self.key), 'deployment')
+        self.assertEqual(payload['topology']['group_id'], group_id)
+        self.assertEqual(payload['topology']['mode'], 'terminal')
+        self.assertEqual(payload['topology']['server_edition_id'], server.name)
+
     def test_offline_activation_restart_and_no_plain_password(self):
         self.assertFalse(self.manager.status()['active'])
         self.manager.activate(self.token)

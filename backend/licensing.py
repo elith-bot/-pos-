@@ -49,6 +49,7 @@ class LicenseManager:
                 raise LicenseError('ملف الترخيص غير صالح.')
             license_data = self.validate(self.path.read_text(encoding='utf-8'))
             return dict(required=True, active=True, edition_id=self.edition_id,
+                        topology=self.deployment.get('topology', {}),
                         expires_at=license_data.get('expires_at'), message='النسخة مفعّلة على هذا الجهاز.')
         except (OSError, ValueError) as error:
             return dict(required=True, active=False, edition_id=self.edition_id, message=str(error))

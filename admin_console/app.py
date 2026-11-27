@@ -37,6 +37,7 @@ class AdminApp(tk.Tk):
 
         self.fields = {}
         self.tabs = {}
+        self.topology_group = tk.StringVar(value=uuid.uuid4().hex)
         self.roles = [dict(id=k, name=v, permissions=sorted(DEFAULTS[k] & set(CAPABILITIES))) for k, v in BUILTINS.items()]
 
         # Apply Modern TTK Styles
@@ -133,6 +134,29 @@ class AdminApp(tk.Tk):
         ttk.Button(role_bar, text='إضافة دور', command=lambda: self.edit_role(new=True)).pack(side='right', padx=6)
         ttk.Button(role_bar, text='نسخة احتياطية للمفتاح', command=self.backup_key).pack(side='left', padx=6)
 
+        sec_network = ttk.LabelFrame(self.main_content, text='  4. ربط أجهزة المحل على الشبكة المحلية  ')
+        sec_network.pack(fill='x', pady=8)
+        network_row = tk.Frame(sec_network, bg='#FFFFFF')
+        network_row.pack(fill='x', padx=10, pady=6)
+        ttk.Label(network_row, text='نوع هذه النسخة:').pack(side='right', padx=(0, 8))
+        self.topology_combo = ttk.Combobox(network_row, state='readonly', width=30,
+            values=['كاشير رئيسي / سيرفر المحل', 'كاشير فرعي يتصل بالرئيسي', 'كاشير مستقل', 'إدارة فقط'])
+        self.topology_combo.current(0)
+        self.topology_combo.pack(side='right')
+        self.topology_combo.bind('<<ComboboxSelected>>', self._on_topology_selected)
+        ttk.Button(network_row, text='إنشاء معرّف مجموعة جديد', command=self._new_topology_group).pack(side='left')
+        self._add_grid_field(sec_network, 'terminal_name', 'اسم هذا الجهاز:', row=1, col=0)
+        self.fields['terminal_name'].set('الكاشير الرئيسي')
+        group_frame = tk.Frame(sec_network, bg='#FFFFFF')
+        group_frame.grid(row=1, column=1, sticky='nsew', padx=10, pady=5)
+        ttk.Label(group_frame, text='معرّف مجموعة المحل (انسخه للأجهزة الفرعية):', anchor='e').pack(fill='x')
+        ttk.Entry(group_frame, textvariable=self.topology_group, justify='left').pack(fill='x', pady=2)
+        self._add_grid_field(sec_network, 'server_edition_id', 'معرّف نسخة الكاشير الرئيسي (للفرعي):', row=2, col=0)
+        self._add_grid_field(sec_network, 'server_address', 'عنوان سيرفر المحل مثل http://192.168.1.10:5000:', row=2, col=1)
+        self.network_note = ttk.Label(sec_network, anchor='e')
+        self.network_note.grid(row=3, column=0, columnspan=2, sticky='ew', padx=10, pady=(3, 8))
+        self._on_topology_selected()
+
         # 3. Big Unified Action Button
         action_frame = tk.Frame(self.main_content, bg='#F8FAFC')
         action_frame.pack(fill='x', pady=15)
@@ -148,8 +172,8 @@ class AdminApp(tk.Tk):
         self.status_label = tk.Label(action_frame, text='جاهز لتصدير النسخة.', font=('Segoe UI', 10), fg='#0284C7', bg='#F8FAFC', anchor='center')
         self.status_label.pack(fill='x', pady=5)
 
-        # 4. Activation Section (Direct in the same window)
-        sec_act = ttk.LabelFrame(self.main_content, text='  4. تفعيل نسخة الزبون (أوفلاين بواسطة كود طلب التفعيل)  ')
+        # 5. Activation Section (Direct in the same window)
+        sec_act = ttk.LabelFrame(self.main_content, text='  5. تفعيل نسخة الزبون (أوفلاين بواسطة كود طلب التفعيل)  ')
         sec_act.pack(fill='x', pady=8)
 
         tk.Label(sec_act, text='الصق كود طلب التفعيل الظاهر على شاشة جهاز الزبون، ثم اضغط زر "إصدار رمز التفعيل":', font=('Segoe UI', 9), bg='#FFFFFF', anchor='e').pack(fill='x', pady=(2, 6))
@@ -181,6 +205,7 @@ class AdminApp(tk.Tk):
         ent = ttk.Entry(f, textvariable=var, justify='right', show='•' if secret else '')
         ent.pack(fill='x', pady=2)
         self.fields[key] = var
+        self.fields[key + '_entry'] = ent
 
     def _on_preset_selected(self, _=None):
         name = list(PRESETS.keys())[self.activity_combo.current()]
@@ -188,6 +213,28 @@ class AdminApp(tk.Tk):
         for k, v in p['tabs'].items():
             if k in self.tabs:
                 self.tabs[k].set(v)
+
+    def _new_topology_group(self):
+        self.topology_group.set(uuid.uuid4().hex)
+
+    def _topology_mode_value(self):
+        return ('server', 'terminal', 'standalone', 'admin')[self.topology_combo.current()]
+
+    def _on_topology_selected(self, _=None):
+        mode = self._topology_mode_value()
+        is_terminal = mode == 'terminal'
+        for key in ('server_edition_id', 'server_address'):
+            self.fields[key + '_entry'].configure(state='normal' if is_terminal else 'disabled')
+        labels = {
+            'server': 'الرئيسي يبيع ويشغّل قاعدة بيانات المحل. الأجهزة الفرعية ستتصل به عبر الشبكة المحلية.',
+            'terminal': 'أدخل معرّف نسخة الرئيسي وعنوانها. لا تشارك ملف قاعدة البيانات؛ الربط يكون عبر السيرفر فقط.',
+            'standalone': 'نسخة مستقلة ببياناتها الخاصة، غير مرتبطة بأجهزة أخرى.',
+            'admin': 'نسخة إدارة فقط؛ لا تُستخدم كنقطة بيع أو قاعدة بيانات للمحل.',
+        }
+        defaults = {'server': 'الكاشير الرئيسي', 'terminal': 'كاشير فرعي', 'standalone': 'كاشير مستقل', 'admin': 'إدارة'}
+        if not self.fields['terminal_name'].get().strip() or self.fields['terminal_name'].get() in defaults.values():
+            self.fields['terminal_name'].set(defaults[mode])
+        self.network_note.configure(text=labels[mode])
 
     def _ensure_key_ready(self):
         if self.key is not None: return True
@@ -290,7 +337,11 @@ class AdminApp(tk.Tk):
                 {k: values[k] for k in ['name', 'customer_name', 'phone', 'address', 'notes']},
                 dict(name=values['owner_name'], phone=values['owner_phone'], password=self.fields['owner_password'].get()),
                 settings,
-                self.roles, vendor_name=values['vendor_name']
+                self.roles, vendor_name=values['vendor_name'], topology=dict(
+                    mode=self._topology_mode_value(), group_id=self.topology_group.get().strip(),
+                    terminal_name=values['terminal_name'],
+                    server_edition_id=values['server_edition_id'],
+                    server_address=values['server_address'])
             )
 
             self.fields['owner_password'].set('')
