@@ -1,6 +1,6 @@
 {
-  "version": "1.2.2",
-  "step": 6,
-  "slug": "pyinstaller-path-fix",
-  "description_ar": "إصلاح مسار بناء لوحة الأدمن ومنع تعارض مكتبات PyInstaller"
+  "version": "1.2.3",
+  "step": 7,
+  "slug": "minimal-build-kit",
+  "description_ar": "تصغير حزمة بناء الأدمن إلى ملفات المشروع المطلوبة فقط"
 }

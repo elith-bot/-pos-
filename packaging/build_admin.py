@@ -50,7 +50,7 @@ for folder in ['backend', 'packaging']:
         target = kit / folder / source.name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-for relative in ['frontend/build/windows/x64/runner/Release', 'frontend/assets/fonts', 'release-build/tooling']:
+for relative in ['frontend/build/windows/x64/runner/Release', 'frontend/assets/fonts']:
     shutil.copytree(root / relative, kit / relative, dirs_exist_ok=True)
 shutil.copy2(root / 'backend' / 'requirements.txt', kit / 'backend' / 'requirements.txt')
 shutil.copy2(root / 'VERSION.json', kit / 'VERSION.json')
