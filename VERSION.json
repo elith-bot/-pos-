@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
-  "step": 4,
-  "slug": "local-server-terminals",
-  "description_ar": "إضافة ربط الكاشير الرئيسي والأجهزة الفرعية داخل المحل"
+  "version": "1.2.1",
+  "step": 5,
+  "slug": "inplace-admin-build",
+  "description_ar": "تحديث لوحة الأدمن داخل مجلد التشغيل الحالي مع حفظ صادرات الزبائن"
 }
