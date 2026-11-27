@@ -22,6 +22,7 @@ from role_access import role_exists, permissions_for, role_rank
 from licensing import install_licensing
 from system_settings import install_settings
 from remote_support import support_bp
+from peer_gateway import install_peer_gateway
 
 def create_app(test_config=None):
     app = Flask(__name__)
@@ -32,6 +33,7 @@ def create_app(test_config=None):
     CORS(app)
     db.init_app(app)
     install_licensing(app)
+    install_peer_gateway(app)
     install_security(app)
     install_settings(app)
     install_roles(app)
