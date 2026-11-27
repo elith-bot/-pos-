@@ -32,7 +32,10 @@ if staging.exists():
 if customer_exports.is_dir():
     shutil.copytree(customer_exports, staging)
 env = dict(os.environ)
-env['PYTHONPATH'] = os.pathsep.join([str(root / 'release-build' / 'tooling'), str(root / 'backend'), str(root / 'admin_console')])
+# PyInstaller imports its own ``pefile`` package.  Do not add the release
+# tooling directory here because its compatibility copy has the same name and
+# could shadow PyInstaller's dependency during the build.
+env['PYTHONPATH'] = os.pathsep.join([str(root / 'backend'), str(root / 'admin_console')])
 subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir', '--windowed',
     '--name', app_name, '--distpath', str(output_root), '--workpath', str(root / 'release-build' / 'admin'),
     '--specpath', str(root / 'release-build'), '--paths', str(root / 'backend'), '--paths', str(root / 'admin_console'),

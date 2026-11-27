@@ -1,6 +1,6 @@
 {
-  "version": "1.2.1",
-  "step": 5,
-  "slug": "inplace-admin-build",
-  "description_ar": "تحديث لوحة الأدمن داخل مجلد التشغيل الحالي مع حفظ صادرات الزبائن"
+  "version": "1.2.2",
+  "step": 6,
+  "slug": "pyinstaller-path-fix",
+  "description_ar": "إصلاح مسار بناء لوحة الأدمن ومنع تعارض مكتبات PyInstaller"
 }
